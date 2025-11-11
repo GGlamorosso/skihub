@@ -1,0 +1,29 @@
+# global
+.env
+.env.*
+*.log
+
+# supabase
+.supabase/**
+!backend/supabase/migrations/**
+!backend/supabase/seed/**
+backend/supabase/.temp/**
+backend/supabase/.output/**
+
+# node/deno
+node_modules/
+dist/
+
+# flutter
+apps/mobile/build/
+apps/mobile/.dart_tool/
+apps/mobile/.packages
+apps/mobile/ios/Pods/
+apps/mobile/android/.gradle/
+apps/mobile/android/app/release/
+apps/mobile/*.keystore
+apps/mobile/*.jks
+
+# OS
+.DS_Store
+Thumbs.db
