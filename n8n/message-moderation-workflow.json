@@ -1,0 +1,347 @@
+{
+  "name": "CrewSnow Message Moderation Workflow (Optional)",
+  "description": "Optional automated text moderation workflow using OpenAI Moderation API or Perspective API",
+  "version": 1,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST", 
+        "path": "/webhook/message-moderation",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "https://your-project.supabase.co"
+        }
+      },
+      "id": "message-webhook",
+      "name": "1. Message Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "crewsnow-message-moderation"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate message moderation webhook\nconst crypto = require('crypto');\n\nconst webhookData = $input.first().json;\nconst messageRecord = webhookData.record;\n\n// Basic validation\nif (!messageRecord || !messageRecord.id || !messageRecord.content) {\n  throw new Error('Invalid message webhook payload');\n}\n\n// Verify signature (same as photo moderation)\nconst receivedSignature = webhookData.headers?.['x-crewsnow-signature'];\nconst secret = $vars.N8N_WEBHOOK_SECRET;\n\nif (secret && receivedSignature) {\n  const payload = JSON.stringify(messageRecord);\n  const expectedSignature = 'sha256=' + crypto\n    .createHmac('sha256', secret)\n    .update(payload)\n    .digest('hex');\n    \n  if (receivedSignature !== expectedSignature) {\n    throw new Error('Invalid message webhook signature');\n  }\n}\n\n// Prepare message data\nconst messageData = {\n  id: messageRecord.id,\n  content: messageRecord.content,\n  sender_id: messageRecord.sender_id,\n  match_id: messageRecord.match_id,\n  created_at: messageRecord.created_at,\n  content_length: messageRecord.content.length,\n  sender_username: messageRecord.sender_username\n};\n\nconsole.log('📝 Message prepared for moderation:', {\n  id: messageData.id,\n  content_preview: messageData.content.substring(0, 50) + '...',\n  length: messageData.content_length\n});\n\nreturn { message: messageData, validated: true };"
+      },
+      "id": "validate-message",
+      "name": "2. Validate Message Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/moderations",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $vars.OPENAI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "input",
+              "value": "={{ $json.message.content }}"
+            },
+            {
+              "name": "model",
+              "value": "text-moderation-latest"
+            }
+          ]
+        }
+      },
+      "id": "openai-moderation",
+      "name": "3a. OpenAI Moderation API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://commentanalyzer.googleapis.com/v1alpha1/comments:analyze",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "={{ $vars.GOOGLE_PERSPECTIVE_API_KEY }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "requestedAttributes",
+              "value": "={{ { TOXICITY: {}, SEVERE_TOXICITY: {}, IDENTITY_ATTACK: {}, INSULT: {}, PROFANITY: {}, THREAT: {} } }}"
+            },
+            {
+              "name": "comment",
+              "value": "={{ { text: $('Validate Message Data').first().json.message.content } }}"
+            },
+            {
+              "name": "languages",
+              "value": "=['en', 'fr', 'de', 'it', 'es']"
+            }
+          ]
+        }
+      },
+      "id": "perspective-api",
+      "name": "3b. Google Perspective API",
+      "type": "n8n-nodes-base.httpRequest", 
+      "typeVersion": 4,
+      "position": [680, 400],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 3. Analyse du texte selon spécifications\n// Utilise service NLP pour détecter insultes, harcèlement, contenu violent\n// Définit seuils et règles (toxicité > 0.8 → flag)\n\nlet moderationResult = {};\nlet toxicityScore = 0;\nlet flagReasons = [];\nconst messageData = $('Validate Message Data').first().json.message;\n\n// Process OpenAI Moderation results\nconst openaiResult = $('OpenAI Moderation API').first()?.json;\nif (openaiResult && openaiResult.results && openaiResult.results[0]) {\n  const result = openaiResult.results[0];\n  \n  // Check each category\n  const categories = result.categories || {};\n  const categoryScores = result.category_scores || {};\n  \n  // Define thresholds according to specifications\n  const thresholds = {\n    'harassment': 0.8,\n    'harassment/threatening': 0.8,\n    'hate': 0.8, \n    'hate/threatening': 0.8,\n    'self-harm': 0.9,\n    'self-harm/intent': 0.9,\n    'self-harm/instructions': 0.9,\n    'sexual': 0.8,\n    'sexual/minors': 0.5, // Lower threshold for minors\n    'violence': 0.8,\n    'violence/graphic': 0.8\n  };\n  \n  let maxScore = 0;\n  let primaryViolation = null;\n  \n  Object.entries(thresholds).forEach(([category, threshold]) => {\n    const score = categoryScores[category] || 0;\n    const flagged = categories[category] || false;\n    \n    if (score > threshold || flagged) {\n      flagReasons.push({\n        category,\n        score: Math.round(score * 100) / 100,\n        threshold,\n        flagged\n      });\n      \n      if (score > maxScore) {\n        maxScore = score;\n        primaryViolation = category;\n      }\n    }\n  });\n  \n  toxicityScore = maxScore;\n}\n\n// Determine action based on analysis\nlet action = 'approved';\nlet severity = 'low';\nlet autoBlock = false;\n\nif (toxicityScore > 0.9) {\n  action = 'blocked';\n  severity = 'critical';\n  autoBlock = true;\n} else if (toxicityScore > 0.8) {\n  action = 'flagged';\n  severity = 'high';\n} else if (toxicityScore > 0.6) {\n  action = 'flagged';\n  severity = 'medium';\n} else if (flagReasons.length > 0) {\n  action = 'flagged';\n  severity = 'low';\n}\n\nconst decision = {\n  message_id: messageData.id,\n  user_id: messageData.sender_id,\n  action: action,\n  auto_block: autoBlock,\n  toxicity_score: toxicityScore,\n  primary_violation: primaryViolation,\n  all_violations: flagReasons,\n  severity: severity,\n  reason: flagReasons.length > 0 \n    ? `Content violation detected: ${primaryViolation || 'Multiple issues'} (${Math.round(toxicityScore * 100)}% confidence)`\n    : null,\n  processed_at: new Date().toISOString(),\n  service_used: 'openai_moderation'\n};\n\nconsole.log('🔍 Text moderation decision:', decision);\n\nreturn decision;"
+      },
+      "id": "text-analysis",
+      "name": "4. Text Analysis & Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.action }}",
+              "operation": "equal",
+              "value2": "approved"
+            }
+          ]
+        }
+      },
+      "id": "check-text-decision",
+      "name": "5. Check Text Decision",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/rpc/flag_message_for_moderation",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "apikey", 
+              "value": "={{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "p_message_id",
+              "value": "={{ $json.message_id }}"
+            },
+            {
+              "name": "p_flag_type",
+              "value": "toxicity"
+            },
+            {
+              "name": "p_toxicity_score",
+              "value": "={{ $json.toxicity_score }}"
+            },
+            {
+              "name": "p_reason",
+              "value": "={{ $json.reason }}"
+            },
+            {
+              "name": "p_severity",
+              "value": "={{ $json.severity }}"
+            },
+            {
+              "name": "p_auto_block",
+              "value": "={{ $json.auto_block }}"
+            }
+          ]
+        }
+      },
+      "id": "flag-message",
+      "name": "6. Flag/Block Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SUPABASE_URL }}/functions/v1/notification-admin",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "alert_type",
+              "value": "message_flagged"
+            },
+            {
+              "name": "severity",
+              "value": "={{ $('Text Analysis & Decision').first().json.severity }}"
+            },
+            {
+              "name": "message",
+              "value": "Message flagged for moderation: {{ $('Text Analysis & Decision').first().json.reason }}"
+            },
+            {
+              "name": "data",
+              "value": "={{ $('Text Analysis & Decision').first().json }}"
+            }
+          ]
+        }
+      },
+      "id": "alert-moderators",
+      "name": "7. Alert Moderators",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, message: 'Message processed', action: $('Text Analysis & Decision').first().json.action, toxicity_score: $('Text Analysis & Decision').first().json.toxicity_score } }}"
+      },
+      "id": "respond-message-processed",
+      "name": "8. Respond Message Processed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1340, 200]
+    }
+  ],
+  "connections": {
+    "1. Message Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "2. Validate Message Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Validate Message Data": {
+      "main": [
+        [
+          {
+            "node": "3a. OpenAI Moderation API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3a. OpenAI Moderation API": {
+      "main": [
+        [
+          {
+            "node": "4. Text Analysis & Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Text Analysis & Decision": {
+      "main": [
+        [
+          {
+            "node": "5. Check Text Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5. Check Text Decision": {
+      "main": [
+        [
+          {
+            "node": "8. Respond Message Processed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "6. Flag/Block Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6. Flag/Block Message": {
+      "main": [
+        [
+          {
+            "node": "7. Alert Moderators",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7. Alert Moderators": {
+      "main": [
+        [
+          {
+            "node": "8. Respond Message Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

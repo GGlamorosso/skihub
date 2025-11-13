@@ -1,216 +1,214 @@
-# 🎿 CrewSnow Backend
+# 🎿 CrewSnow Backend — branche `feature/db-schema-v1`
 
-Une application de rencontres et social pour skieurs et snowboarders, avec matching géolocalisé et fonctionnalités premium.
+Application de rencontres pour skieurs & snowboarders bâtie 100 % sur Supabase (PostgreSQL + PostGIS, Edge Functions, RLS).  
+Cette branche livre **toute l’infrastructure backend** finalisée (Semaines 1 → 10) et prête à être branchée sur le frontend.
 
-## 🚀 Quickstart Backend
+---
+
+## ✅ Ce qui est livré ici
+
+- Migrations complètes du schéma (`supabase/migrations/`) : tables, RLS, fonctions, triggers, indexes  
+- Edge Functions Deno (`supabase/functions/`) : matching, swipe, Stripe webhook, gatekeeper, GDPR, analytics  
+- Tests SQL & scripts Bash (`supabase/test/`, `scripts/`) : audits RLS, E2E, Stripe, analytics, GDPR  
+- Workflows n8n (`n8n/*.json`) : modération photo/message  
+- CI/CD GitHub Actions (`.github/workflows/`) : pipelines dev + prod  
+- Documentation détaillée : rapports Semaine 5→10, runbook incident, procédure de déploiement, launch summary  
+- Feature flags + monitoring + KPI materialized views
+
+⚠️ Aucun secret (Supabase/Stripe/n8n) n’est versionné. Chaque développeur crée ses propres `.env`.
+
+---
+
+## 🔜 Ce qu’il reste à faire avant la fusion finale
+
+1. Brancher le frontend (ex. branche `feature/frontend-ui`) sur Supabase Dev  
+2. Remplir les fichiers `.env` côté front/back avec vos clés (à partir des `.example`)  
+3. Exécuter la stack sur **CrewSnow Dev** : `supabase db push`, déploiement des functions, variables test  
+4. Tester le front connecté (auth, swipe, messaging, achats Stripe test)  
+5. Lancer `./scripts/test-week10-production-ready.sh` sur Dev — tout doit être ✅  
+6. Fusionner les branches dans `main`, créer tag `v1.0.0`, laisser le pipeline prod déployer
+
+---
+
+## 🔀 Plan de merge (backend + frontend)
+
+1. Ouvrir une PR `feature/db-schema-v1 → main` (backend)  
+2. Collègue front : créer branche `feature/frontend-ui` depuis `main` (après merge backend)  
+3. Tests croisés sur Supabase Dev, corrections  
+4. Merge frontend → `main`  
+5. Pipeline CI/CD dev doit passer ✔️  
+6. Tag `v1.0.0` → pipeline prod → déploiement final
+
+> Toute personne qui clone ce repo doit **lier Supabase** (`supabase link`) et appliquer les migrations.
+
+---
+
+## 🚀 Quickstart backend
 
 ### Prérequis
+- Supabase CLI : `npm install -g supabase`  
+- Node.js 18+ (Edge Functions)  
+- Compte Supabase (projets Dev & Prod)
 
-- **Supabase CLI** : [Installation](https://supabase.com/docs/guides/cli)
-  ```bash
-  npm install -g supabase
-  ```
-- **Node.js** 18+ (pour Edge Functions)
-- Compte Supabase (dev et prod)
-
-### 🔗 Setup Initial
-
-1. **Cloner et naviguer**
-   ```bash
-   git clone <repo-url>
-   cd crewsnow
-   ```
-
-2. **Lier à votre projet Supabase**
-   ```bash
-   # Development
-   supabase link --project-ref <your-dev-project-id>
-   
-   # Production (optionnel)
-   supabase link --project-ref <your-prod-project-id>
-   ```
-
-3. **Pousser le schéma**
-   ```bash
-   supabase db push
-   ```
-
-4. **Charger les données de test**
-   ```bash
-   # Reset complet avec seed data
-   supabase db reset
-   
-   # Ou charger manuellement
-   supabase db run --file supabase/seed/01_seed_stations.sql
-   supabase db run --file supabase/seed/02_seed_test_users.sql
-   ```
-
-### ⚡ Commandes Essentielles
-
+### Setup initial
 ```bash
-# 🔄 Reset complet (migrations + seed)
-supabase db reset
+git clone <repo-url>
+cd crewsnow
 
-# 📤 Pousser nouvelles migrations
+# Lier au projet Supabase (dev)
+supabase link --project-ref <project-dev-ref>
+
+# Appliquer toutes les migrations
 supabase db push
 
-# 🗄️ Générer types TypeScript
-supabase gen types typescript --local > types/database.types.ts
+# Option : reset + seeds fictifs
+supabase db reset
+```
 
-# 📋 Status du projet
+### Commandes utiles
+```bash
+# Push migrations mises à jour
+supabase db push
+
+# Reset local (migrations + seeds tests)
+supabase db reset
+
+# Status du projet lié
 supabase status
 
-# 🔍 Vérifier la base
-./scripts/verify-database.sh
+# Audit complet (Week 10)
+./scripts/test-week10-production-ready.sh
 ```
 
-### 🧪 Vérification
+---
 
-Après setup, vérifiez que tout fonctionne :
+## 🧪 Vérifications recommandées
 
 ```bash
-# Test des fonctions core
-supabase db run --file supabase/verification_complete.sql
+# Audit sécurité + E2E + monitoring
+./scripts/test-week10-production-ready.sh
 
-# Ou via le script
-./scripts/verify-database.sh
+# Tests ciblés (ex: Stripe / Matching / GDPR)
+psql "$DATABASE_URL" -c "SELECT run_week7_complete_tests();"
+psql "$DATABASE_URL" -c "SELECT run_week9_gdpr_tests();"
 ```
 
-**Expected output** : ✅ All tests passed, database ready
+🟢 Sortie attendue : `CrewSnow ready for production launch!`
 
-### 📊 Données Incluses
+---
 
-- **60+ stations de ski** européennes (France, Suisse, Autriche, Italie...)
-- **10 utilisateurs de test** avec profils variés
-- **Matches et messages** d'exemple
-- **Stats de ski** réalistes pour testing
-
-### 🏗️ Architecture
+## 📁 Structure du repo
 
 ```
 supabase/
-├── migrations/          # Schema et fonctions SQL
-├── seed/               # Données de test
-├── functions/          # Edge Functions (Stripe webhook)
-└── docs/              # ERD et documentation
-
-.github/workflows/      # CI/CD automatisé
-scripts/               # Utilitaires (verify-database.sh)
+├── migrations/                    # Semaine 1→10 : schema, fonctions, triggers, indexes
+├── functions/                     # Edge Functions Deno (stripe, matching, gatekeeper, gdpr...)
+├── test/                          # Tests SQL (RLS, matching, Stripe, GDPR, KPI...)
+├── verification_complete.sql      # Audit global DB
+│
+n8n/                               # Workflows modération photo/message
+scripts/                           # Scripts bash (tests, e2e, production readiness)
+.github/workflows/                 # Pipelines CI/CD (dev + prod)
+docs & rapports/                   # Runbook, launch, résumés semaines, checklists
 ```
 
-### 🔐 Configuration Production
+---
 
-#### Supabase Dashboard
-1. **Database → Replication** : Activer realtime sur `matches`, `messages`
-2. **Storage** : Créer bucket `profile-photos` (private)
-3. **Edge Functions** : Deploy `stripe-webhook`
+## 🔐 Configuration Supabase / Stripe / n8n
 
-#### Variables d'environnement
-```bash
-# GitHub Secrets requis
-SUPABASE_ACCESS_TOKEN=supa_...
-SUPABASE_PROJECT_REF_DEV=...
-SUPABASE_PROJECT_REF_PROD=...
-STRIPE_SECRET_KEY_PROD=sk_live_...
-STRIPE_WEBHOOK_SECRET_PROD=whsec_...
+### Supabase Dashboard
+1. **Extensions** : activer `pgcrypto`, `pgjwt`, `postgis`, `pg_cron`, `pgsodium`, `pgaudit`  
+2. **Storage** : buckets `profile_photos` (private), `exports` (private), `public-photos` (optionnel)  
+3. **Realtime** : `matches`, `messages`  
+4. **Variables d’environnement Edge Functions** :  
+   - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`  
+   - `N8N_WEBHOOK_URL`, `N8N_WEBHOOK_SECRET`  
+   - `SERVICE_ROLE_KEY`, `POSTHOG_API_KEY`, etc.
+
+### GitHub Secrets (CI/CD)
+```
+SUPABASE_ACCESS_TOKEN
+SUPABASE_PROJECT_ID_DEV
+SUPABASE_PROJECT_ID_PROD
+SUPABASE_DB_PASSWORD
+STRIPE_SECRET_KEY_PROD
+STRIPE_WEBHOOK_SECRET_PROD
 ```
 
-### 📈 Features Activées
-
-- ✅ **Matching géolocalisé** avec PostGIS
-- ✅ **Chat temps réel** via Supabase Realtime  
-- ✅ **Upload photos** avec modération
-- ✅ **Tracking activités** pour gamification
-- ✅ **Monétisation Stripe** (subscriptions + boosts)
-- ✅ **Groupes/crews** pour sorties collectives
-- ✅ **Performance optimisée** (< 200ms matching)
-
-### 🛠️ Développement
-
-#### Tests
-```bash
-# Tests complets
-supabase test db
-
-# Performance analysis
-supabase db run --file supabase/verification_complete.sql
+### `.env.example`
+```
+SUPABASE_URL=https://<project>.supabase.co
+SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+STRIPE_SECRET_KEY=
+STRIPE_PUBLISHABLE_KEY=
+N8N_WEBHOOK_URL=
+N8N_WEBHOOK_SECRET=
+POSTHOG_API_KEY=
 ```
 
-#### Migrations
+---
+
+## 📦 Historique (Semaines 1 → 10)
+
+| Semaine | Contenu livré |
+|---------|---------------|
+| 1–2 | Schéma DB, RLS, seeds stations/users |
+| 3–4 | Matching initial + messaging temps réel |
+| 5 | Modération images/messages (n8n) |
+| 6 | Matching avancé + filtrage collaboratif |
+| 7 | Stripe (subscriptions, boosts) + quotas |
+| 8 | Analytics, KPI, performance monitoring |
+| 9 | GDPR (export, delete, consent, audit) |
+| 10 | Production readiness, CI/CD, feature flags, runbook |
+
+---
+
+## 📚 Documentation clé
+
+- `FINAL_LAUNCH_SUMMARY.md` – synthèse globale  
+- `RAPPORT_FINAL_SEMAINE_10_PRODUCTION.md` – détails semaine 10  
+- `INCIDENT_RUNBOOK.md` – réponse aux incidents  
+- `DEPLOYMENT_PROCEDURE.md` – déploiement dev/prod  
+- `README_MESSAGING_SYSTEM.md`, `RAPPORT_SPECIFIC_MESSAGING_RLS_POLICIES.md` – messagerie & RLS  
+- `supabase/test/*.sql`, `scripts/test-*.sh` – scripts d’audit et tests
+
+---
+
+## 🔧 Troubleshooting rapide
+
 ```bash
-# Nouvelle migration
-supabase migration new <nom_migration>
-
-# Reset local pour test
-supabase db reset
-
-# Push vers remote
-supabase db push
-```
-
-#### Edge Functions
-```bash
-# Développer localement
-supabase functions serve
-
-# Deploy
-supabase functions deploy stripe-webhook
-```
-
-### 📋 Point In Time Recovery (PITR)
-
-- ✅ **PROD** : Activé automatiquement sur Supabase Pro
-- ⚠️ **DEV** : Non nécessaire (données de test)
-- 📝 **Backup** : Point-in-time recovery jusqu'à 7 jours (Pro)
-
-### 🔧 Troubleshooting
-
-#### Seeds ne passent pas
-```bash
-# Si RLS bloque les seeds en dev
+# RLS bloque les seeds en dev ?
 supabase db run --file - <<< "
   ALTER TABLE users DISABLE ROW LEVEL SECURITY;
-  -- Run your seeds
+  -- seed...
   ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 "
-```
 
-#### Liens projet cassés
-```bash
+# Mauvais projet lié ?
 supabase projects list
-supabase link --project-ref <correct-project-id>
-```
+supabase link --project-ref <project-id>
 
-#### Performance lente
-```bash
-# Analyser les requêtes
+# Analyse des requêtes lentes
 supabase db run --file - <<< "
-  SELECT query, mean_exec_time 
-  FROM pg_stat_statements 
+  SELECT query, mean_exec_time
+  FROM pg_stat_statements
   ORDER BY mean_exec_time DESC LIMIT 10;
 "
 ```
 
-### 📚 Documentation
+---
 
-- **ERD** : `docs/schema.dbml` ([Visualiser](https://dbdiagram.io/))
-- **API Contracts** : `docs/api-contracts.md`
-- **Architecture** : `docs/architecture.md`
-- **Modèle de données** : `supabase/README_DATA_MODEL.md`
-- **Rapport de vérification** : `supabase/VERIFICATION_REPORT.md`
+## 🏁 Prochaines étapes (résumé)
 
-### 🎯 Version
-
-**Current** : `v0.1.0-db` (Semaine 1 - Schema Foundation)
-
-**Next** : API Development (Semaine 2)
-
-### 📞 Support
-
-- Issues GitHub pour bugs/features
-- Vérifications complètes dans `supabase/verification_complete.sql`
-- Performance monitoring dans CI/CD
+1. Lancer l’infra sur Supabase Dev ✅  
+2. Brancher le frontend (nouvelle branche) ✅  
+3. Exécuter tous les tests (scripts semaine 5→10) ✅  
+4. Fusionner front + back dans `main` ✅  
+5. Tag `v1.0.0` → pipeline prod ✅  
+6. Vérifier monitoring + launch 🎉
 
 ---
 
-**🎿 Ready to connect ski enthusiasts worldwide! ⛷️**
+**🎿 Ready to connect ski enthusiasts worldwide! ⛷️**  
+*Branche `feature/db-schema-v1` — prête à être fusionnée après intégration frontend.*

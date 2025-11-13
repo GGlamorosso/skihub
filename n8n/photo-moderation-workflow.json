@@ -1,0 +1,439 @@
+{
+  "name": "CrewSnow Photo Moderation Workflow",
+  "description": "Automated photo moderation workflow using AWS Rekognition and notification system",
+  "version": 1,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/webhook/photo-moderation",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "https://your-project.supabase.co,http://localhost:54321"
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Photo Upload Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "crewsnow-photo-moderation"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.headers['x-crewsnow-signature'] }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "verify-signature",
+      "name": "Verify Webhook Signature",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Verify HMAC signature for security\nconst crypto = require('crypto');\n\nconst payload = JSON.stringify($input.first().json.record);\nconst receivedSignature = $input.first().json.headers['x-crewsnow-signature'];\nconst secret = $vars.N8N_WEBHOOK_SECRET;\n\nif (!secret) {\n  throw new Error('N8N_WEBHOOK_SECRET not configured');\n}\n\nif (!receivedSignature) {\n  throw new Error('Missing webhook signature');\n}\n\n// Generate expected signature\nconst expectedSignature = 'sha256=' + crypto.createHmac('sha256', secret).update(payload).digest('hex');\n\n// Verify signature\nif (receivedSignature !== expectedSignature) {\n  throw new Error('Invalid webhook signature');\n}\n\nconsole.log('✅ Webhook signature verified');\n\n// Extract photo data\nconst photoData = $input.first().json.record;\n\nreturn {\n  verified: true,\n  photo: {\n    id: photoData.id,\n    user_id: photoData.user_id,\n    storage_path: photoData.storage_path,\n    signed_url: photoData.signed_url,\n    file_size_bytes: photoData.file_size_bytes,\n    mime_type: photoData.mime_type,\n    created_at: photoData.created_at\n  }\n};"
+      },
+      "id": "validate-webhook",
+      "name": "Validate Webhook Security",
+      "type": "n8n-nodes-base.code", 
+      "typeVersion": 2,
+      "position": [680, 220]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.photo.signed_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "download-image",
+      "name": "Download Image from Storage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [900, 220]
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "detectModerationLabels",
+        "additionalFields": {
+          "maxLabels": 20,
+          "minConfidence": 75
+        }
+      },
+      "id": "rekognition-moderation",
+      "name": "AWS Rekognition Moderation",
+      "type": "n8n-nodes-base.awsRekognition",
+      "typeVersion": 1,
+      "position": [1120, 220],
+      "credentials": {
+        "aws": {
+          "id": "crewsnow-aws-credentials",
+          "name": "CrewSnow AWS Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.ModerationLabels.length }}",
+              "operation": "equal",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "check-moderation-result",
+      "name": "Check if Photo is Safe",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1340, 220]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-project.supabase.co/rest/v1/rpc/approve_photo",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "apikey",
+              "value": "={{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization", 
+              "value": "Bearer {{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "photo_id",
+              "value": "={{ $('Validate Webhook Security').first().json.photo.id }}"
+            },
+            {
+              "name": "moderator_id",
+              "value": "00000000-0000-0000-0000-000000000000"
+            }
+          ]
+        }
+      },
+      "id": "approve-photo",
+      "name": "Approve Photo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1560, 120]
+    },
+    {
+      "parameters": {
+        "method": "POST", 
+        "url": "https://your-project.supabase.co/rest/v1/rpc/reject_photo",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "apikey",
+              "value": "={{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "photo_id", 
+              "value": "={{ $('Validate Webhook Security').first().json.photo.id }}"
+            },
+            {
+              "name": "moderator_id",
+              "value": "00000000-0000-0000-0000-000000000000"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $('AWS Rekognition Moderation').first().json.ModerationLabels.map(label => label.Name).join(', ') || 'Content policy violation detected' }}"
+            }
+          ]
+        }
+      },
+      "id": "reject-photo",
+      "name": "Reject Photo", 
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1560, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-project.supabase.co/functions/v1/notification-user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type", 
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "={{ $('Validate Webhook Security').first().json.photo.user_id }}"
+            },
+            {
+              "name": "notification_type",
+              "value": "photo_approved"
+            },
+            {
+              "name": "data",
+              "value": "={{ { photo_id: $('Validate Webhook Security').first().json.photo.id } }}"
+            }
+          ]
+        }
+      },
+      "id": "notify-approval",
+      "name": "Notify User - Photo Approved",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1780, 120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://your-project.supabase.co/functions/v1/notification-user", 
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "={{ $('Validate Webhook Security').first().json.photo.user_id }}"
+            },
+            {
+              "name": "notification_type", 
+              "value": "photo_rejected"
+            },
+            {
+              "name": "data",
+              "value": "={{ { photo_id: $('Validate Webhook Security').first().json.photo.id, reason: $('AWS Rekognition Moderation').first().json.ModerationLabels.map(label => label.Name).join(', ') } }}"
+            }
+          ]
+        }
+      },
+      "id": "notify-rejection",
+      "name": "Notify User - Photo Rejected", 
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1780, 320]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: 'Invalid webhook signature' } }}"
+      },
+      "id": "respond-error",
+      "name": "Respond with Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, message: 'Photo processed for moderation', photo_id: $('Validate Webhook Security').first().json.photo.id, status: $('Check if Photo is Safe').first().json ? 'approved' : 'rejected' } }}"
+      },
+      "id": "respond-success",
+      "name": "Respond with Success",
+      "type": "n8n-nodes-base.respondToWebhook", 
+      "typeVersion": 1,
+      "position": [2000, 220]
+    }
+  ],
+  "connections": {
+    "Photo Upload Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify Webhook Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Webhook Signature": {
+      "main": [
+        [
+          {
+            "node": "Validate Webhook Security",
+            "type": "main", 
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond with Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Webhook Security": {
+      "main": [
+        [
+          {
+            "node": "Download Image from Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Image from Storage": {
+      "main": [
+        [
+          {
+            "node": "AWS Rekognition Moderation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AWS Rekognition Moderation": {
+      "main": [
+        [
+          {
+            "node": "Check if Photo is Safe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if Photo is Safe": {
+      "main": [
+        [
+          {
+            "node": "Approve Photo",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject Photo", 
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approve Photo": {
+      "main": [
+        [
+          {
+            "node": "Notify User - Photo Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reject Photo": {
+      "main": [
+        [
+          {
+            "node": "Notify User - Photo Rejected",
+            "type": "main", 
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify User - Photo Approved": {
+      "main": [
+        [
+          {
+            "node": "Respond with Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify User - Photo Rejected": {
+      "main": [
+        [
+          {
+            "node": "Respond with Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "id": "crewsnow-moderation",
+      "name": "CrewSnow Moderation"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-10T00:00:00.000Z",
+  "versionId": "1"
+}

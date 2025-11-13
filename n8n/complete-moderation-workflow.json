@@ -1,0 +1,542 @@
+{
+  "name": "CrewSnow Complete Photo Moderation Workflow",
+  "description": "Complete automated photo moderation workflow with AWS Rekognition, secure download, decision logic, and user notifications",
+  "version": 2,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/webhook/photo-moderation",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "https://your-project.supabase.co,http://localhost:54321",
+          "allowedMethods": "POST"
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "1. Photo Upload Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "crewsnow-photo-moderation"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Téléchargement sécurisé de l'image selon spécifications\n// Vérification signature HMAC pour authenticité\n\nconst crypto = require('crypto');\n\n// Extraire données webhook\nconst webhookData = $input.first().json;\nconst headers = webhookData.headers || {};\nconst photoRecord = webhookData.record;\n\n// Validation payload\nif (!photoRecord || !photoRecord.id || !photoRecord.storage_path) {\n  throw new Error('Invalid webhook payload: missing required fields');\n}\n\n// Vérifier signature selon spécifications\nconst receivedSignature = headers['x-crewsnow-signature'];\nconst webhookSecret = $vars.N8N_WEBHOOK_SECRET;\n\nif (!webhookSecret) {\n  throw new Error('N8N_WEBHOOK_SECRET not configured in variables');\n}\n\nif (!receivedSignature) {\n  throw new Error('Missing webhook signature - security check failed');\n}\n\n// Générer signature attendue\nconst payload = JSON.stringify(photoRecord);\nconst expectedSignature = 'sha256=' + crypto\n  .createHmac('sha256', webhookSecret)\n  .update(payload)\n  .digest('hex');\n\n// Vérifier authenticité selon spécifications\nif (receivedSignature !== expectedSignature) {\n  throw new Error('Invalid webhook signature - unauthorized request');\n}\n\nconsole.log('✅ Webhook signature verified - request is authentic');\n\n// Préparer données pour workflow\nconst photoData = {\n  id: photoRecord.id,\n  user_id: photoRecord.user_id,\n  storage_path: photoRecord.storage_path,\n  signed_url: photoRecord.signed_url, // Généré par Edge Function\n  file_size_bytes: photoRecord.file_size_bytes,\n  mime_type: photoRecord.mime_type,\n  created_at: photoRecord.created_at,\n  bucket_name: photoRecord.bucket_name || 'profile_photos'\n};\n\n// Validation sécurité supplémentaire\nif (!photoData.signed_url) {\n  throw new Error('Missing signed URL - cannot download image securely');\n}\n\n// Ajuster durée validité selon spécifications (5 minutes)\nconst urlExpirationCheck = new URL(photoData.signed_url);\nconst expiresParam = urlExpirationCheck.searchParams.get('Expires');\nconst currentTime = Math.floor(Date.now() / 1000);\n\nif (expiresParam && parseInt(expiresParam) - currentTime > 300) {\n  console.log('⚠️ Signed URL expires in more than 5 minutes - security note');\n}\n\nconsole.log('📊 Photo data prepared:', {\n  id: photoData.id,\n  user_id: photoData.user_id,\n  storage_path: photoData.storage_path,\n  file_size: photoData.file_size_bytes,\n  mime_type: photoData.mime_type\n});\n\nreturn { \n  verified: true,\n  photo: photoData,\n  timestamp: new Date().toISOString(),\n  source: 'supabase_webhook'\n};"
+      },
+      "id": "validate-security",
+      "name": "2. Validate Security & Extract Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.photo.signed_url }}",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "imageData"
+            }
+          },
+          "redirect": {
+            "redirect": {
+              "followRedirects": true,
+              "maxRedirects": 3
+            }
+          }
+        }
+      },
+      "id": "download-image",
+      "name": "3. Download Image Securely",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.imageData ? Object.keys($json.imageData).length : 0 }}",
+              "operation": "greaterThan",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "check-download",
+      "name": "4. Verify Image Download",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "detectModerationLabels",
+        "binaryPropertyName": "imageData",
+        "additionalFields": {
+          "maxLabels": 25,
+          "minConfidence": 70,
+          "humanLoopConfig": {
+            "humanLoopName": "crewsnow-photo-review",
+            "flowDefinitionArn": "arn:aws:sagemaker:region:account:flow-definition/crewsnow-review"
+          }
+        }
+      },
+      "id": "rekognition-analysis",
+      "name": "5. AWS Rekognition Analysis",
+      "type": "n8n-nodes-base.awsRekognition",
+      "typeVersion": 1,
+      "position": [1120, 300],
+      "credentials": {
+        "aws": {
+          "id": "crewsnow-aws-credentials",
+          "name": "CrewSnow AWS Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 3. Décision de modération selon spécifications\n// Compare scores aux seuils définis\n\nconst moderationLabels = $input.first().json.ModerationLabels || [];\nconst photoData = $('Validate Security & Extract Data').first().json.photo;\n\nconsole.log('🔍 Moderation analysis started:', {\n  photo_id: photoData.id,\n  total_labels: moderationLabels.length,\n  labels: moderationLabels.map(l => ({ name: l.Name, confidence: l.Confidence }))\n});\n\n// Seuils de modération selon spécifications\nconst MODERATION_THRESHOLDS = {\n  'Explicit Nudity': 0.8,        // > 80% = rejet\n  'Suggestive': 0.9,             // > 90% = rejet  \n  'Violence': 0.8,               // > 80% = rejet\n  'Visually Disturbing': 0.85,   // > 85% = rejet\n  'Hate Symbols': 0.7,           // > 70% = rejet\n  'Rude Gestures': 0.85,         // > 85% = rejet\n  'Drugs': 0.8,                 // > 80% = rejet\n  'Tobacco': 0.9,               // > 90% = rejet\n  'Gambling': 0.85,             // > 85% = rejet\n  'Middle Finger': 0.75          // > 75% = rejet\n};\n\n// Analyser chaque label détecté\nconst violations = [];\nlet shouldReject = false;\nlet maxConfidence = 0;\nlet primaryReason = '';\n\nfor (const label of moderationLabels) {\n  const threshold = MODERATION_THRESHOLDS[label.Name];\n  \n  if (threshold && label.Confidence / 100 > threshold) {\n    violations.push({\n      category: label.Name,\n      confidence: label.Confidence,\n      threshold: threshold * 100\n    });\n    \n    shouldReject = true;\n    \n    if (label.Confidence > maxConfidence) {\n      maxConfidence = label.Confidence;\n      primaryReason = label.Name;\n    }\n  }\n}\n\n// Décision finale selon spécifications\nconst decision = {\n  action: shouldReject ? 'rejected' : 'approved',\n  reason: shouldReject ? `Content policy violation: ${primaryReason} (${maxConfidence.toFixed(1)}% confidence)` : null,\n  violations: violations,\n  all_labels: moderationLabels,\n  confidence_score: maxConfidence,\n  processed_at: new Date().toISOString()\n};\n\nconsole.log('⚖️ Moderation decision:', decision);\n\n// Préparer données pour mise à jour base\nconst updateData = {\n  photo_id: photoData.id,\n  user_id: photoData.user_id,\n  moderation_status: decision.action,\n  moderation_reason: decision.reason,\n  moderated_at: decision.processed_at,\n  moderator_id: '00000000-0000-0000-0000-000000000000', // System moderation\n  decision_data: decision\n};\n\nreturn updateData;"
+      },
+      "id": "moderation-decision",
+      "name": "6. Moderation Decision Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.moderation_status }}",
+              "operation": "equal",
+              "value2": "approved"
+            }
+          ]
+        }
+      },
+      "id": "check-approved",
+      "name": "7. Check Decision",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/rpc/approve_photo",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "apikey",
+              "value": "={{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "photo_id",
+              "value": "={{ $json.photo_id }}"
+            },
+            {
+              "name": "moderator_id",
+              "value": "={{ $json.moderator_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "approve-photo-db",
+      "name": "8a. Approve Photo in DB",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1780, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SUPABASE_URL }}/rest/v1/rpc/reject_photo",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "apikey",
+              "value": "={{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "photo_id",
+              "value": "={{ $json.photo_id }}"
+            },
+            {
+              "name": "moderator_id",
+              "value": "={{ $json.moderator_id }}"
+            },
+            {
+              "name": "reason",
+              "value": "={{ $json.moderation_reason }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "reject-photo-db",
+      "name": "8b. Reject Photo in DB",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1780, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SUPABASE_URL }}/functions/v1/notification-user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "={{ $('Moderation Decision Logic').first().json.user_id }}"
+            },
+            {
+              "name": "notification_type",
+              "value": "photo_approved"
+            },
+            {
+              "name": "title",
+              "value": "Photo approuvée ✅"
+            },
+            {
+              "name": "message",
+              "value": "Votre photo de profil a été approuvée et est maintenant visible par les autres utilisateurs."
+            },
+            {
+              "name": "data",
+              "value": "={{ { photo_id: $('Moderation Decision Logic').first().json.photo_id, approved_at: $('Moderation Decision Logic').first().json.processed_at } }}"
+            }
+          ]
+        }
+      },
+      "id": "notify-approved",
+      "name": "9a. Notify User - Approved",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.SUPABASE_URL }}/functions/v1/notification-user",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $vars.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "={{ $('Moderation Decision Logic').first().json.user_id }}"
+            },
+            {
+              "name": "notification_type",
+              "value": "photo_rejected"
+            },
+            {
+              "name": "title",
+              "value": "Photo rejetée ❌"
+            },
+            {
+              "name": "message",
+              "value": "Votre photo a été rejetée car elle ne respecte pas nos conditions d'utilisation. Raison: {{ $('Moderation Decision Logic').first().json.moderation_reason }}"
+            },
+            {
+              "name": "data",
+              "value": "={{ { photo_id: $('Moderation Decision Logic').first().json.photo_id, reason: $('Moderation Decision Logic').first().json.moderation_reason, rejected_at: $('Moderation Decision Logic').first().json.processed_at } }}"
+            }
+          ]
+        }
+      },
+      "id": "notify-rejected",
+      "name": "9b. Notify User - Rejected",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2000, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log workflow execution for monitoring\nconst photoData = $('Validate Security & Extract Data').first().json.photo;\nconst moderationResult = $('Moderation Decision Logic').first().json;\nconst approvalAttempt = $('Approve Photo in DB').first();\nconst rejectionAttempt = $('Reject Photo in DB').first();\n\n// Determine if DB update was successful\nlet dbUpdateSuccess = false;\nlet dbUpdateError = null;\n\nif (moderationResult.moderation_status === 'approved' && approvalAttempt) {\n  dbUpdateSuccess = approvalAttempt.json ? true : false;\n  dbUpdateError = approvalAttempt.error || null;\n} else if (moderationResult.moderation_status === 'rejected' && rejectionAttempt) {\n  dbUpdateSuccess = rejectionAttempt.json ? true : false;\n  dbUpdateError = rejectionAttempt.error || null;\n}\n\n// Create comprehensive log\nconst executionLog = {\n  workflow_id: $workflow.id,\n  execution_id: $execution.id,\n  photo_id: photoData.id,\n  user_id: photoData.user_id,\n  processing_start: $('Validate Security & Extract Data').first().json.timestamp,\n  processing_end: new Date().toISOString(),\n  decision: moderationResult.moderation_status,\n  reason: moderationResult.moderation_reason,\n  confidence_score: moderationResult.confidence_score,\n  violations_detected: moderationResult.violations.length,\n  db_update_success: dbUpdateSuccess,\n  db_update_error: dbUpdateError,\n  total_processing_time_ms: Date.now() - new Date($('Validate Security & Extract Data').first().json.timestamp).getTime()\n};\n\nconsole.log('📊 Workflow execution completed:', executionLog);\n\nreturn {\n  success: true,\n  photo_processed: true,\n  decision: moderationResult.moderation_status,\n  processing_time_ms: executionLog.total_processing_time_ms,\n  log: executionLog\n};"
+      },
+      "id": "log-execution",
+      "name": "10. Log Workflow Execution",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, message: 'Photo moderation completed', photo_id: $('Validate Security & Extract Data').first().json.photo.id, decision: $('Moderation Decision Logic').first().json.moderation_status, processing_time_ms: $('Log Workflow Execution').first().json.processing_time_ms } }}"
+      },
+      "id": "respond-success",
+      "name": "11. Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2440, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, error: 'Failed to download image from signed URL', photo_id: $('Validate Security & Extract Data').first().json.photo.id } }}"
+      },
+      "id": "respond-download-error",
+      "name": "Error: Download Failed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 450]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Alternative moderation service: Google Cloud Vision\n// Use if AWS Rekognition is not available\n\nconst { GoogleAuth } = require('google-auth-library');\nconst auth = new GoogleAuth({\n  credentials: JSON.parse($vars.GOOGLE_CLOUD_SERVICE_ACCOUNT),\n  scopes: ['https://www.googleapis.com/auth/cloud-platform']\n});\n\nconst client = await auth.getClient();\nconst projectId = $vars.GOOGLE_CLOUD_PROJECT_ID;\n\nconst imageData = $('Download Image Securely').first().binary.imageData;\nconst base64Image = Buffer.from(imageData).toString('base64');\n\nconst request = {\n  image: {\n    content: base64Image\n  },\n  features: [\n    {\n      type: 'SAFE_SEARCH_DETECTION',\n      maxResults: 1\n    }\n  ]\n};\n\nconst response = await client.request({\n  url: `https://vision.googleapis.com/v1/images:annotate`,\n  method: 'POST',\n  data: { requests: [request] }\n});\n\nconst safeSearchAnnotation = response.data.responses[0].safeSearchAnnotation;\n\n// Convert Google ratings to moderation labels format\nconst riskLevels = { VERY_LIKELY: 95, LIKELY: 80, POSSIBLE: 60, UNLIKELY: 20, VERY_UNLIKELY: 5 };\n\nconst moderationLabels = [];\nif (safeSearchAnnotation.adult && riskLevels[safeSearchAnnotation.adult] > 70) {\n  moderationLabels.push({ Name: 'Explicit Nudity', Confidence: riskLevels[safeSearchAnnotation.adult] });\n}\nif (safeSearchAnnotation.violence && riskLevels[safeSearchAnnotation.violence] > 70) {\n  moderationLabels.push({ Name: 'Violence', Confidence: riskLevels[safeSearchAnnotation.violence] });\n}\nif (safeSearchAnnotation.racy && riskLevels[safeSearchAnnotation.racy] > 85) {\n  moderationLabels.push({ Name: 'Suggestive', Confidence: riskLevels[safeSearchAnnotation.racy] });\n}\n\nreturn { ModerationLabels: moderationLabels, service: 'google_vision' };"
+      },
+      "id": "google-vision-alternative",
+      "name": "Alternative: Google Vision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 500],
+      "disabled": true
+    }
+  ],
+  "connections": {
+    "1. Photo Upload Webhook": {
+      "main": [
+        [
+          {
+            "node": "2. Validate Security & Extract Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Validate Security & Extract Data": {
+      "main": [
+        [
+          {
+            "node": "3. Download Image Securely",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. Download Image Securely": {
+      "main": [
+        [
+          {
+            "node": "4. Verify Image Download",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Verify Image Download": {
+      "main": [
+        [
+          {
+            "node": "5. AWS Rekognition Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Download Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5. AWS Rekognition Analysis": {
+      "main": [
+        [
+          {
+            "node": "6. Moderation Decision Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6. Moderation Decision Logic": {
+      "main": [
+        [
+          {
+            "node": "7. Check Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7. Check Decision": {
+      "main": [
+        [
+          {
+            "node": "8a. Approve Photo in DB",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "8b. Reject Photo in DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8a. Approve Photo in DB": {
+      "main": [
+        [
+          {
+            "node": "9a. Notify User - Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8b. Reject Photo in DB": {
+      "main": [
+        [
+          {
+            "node": "9b. Notify User - Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "9a. Notify User - Approved": {
+      "main": [
+        [
+          {
+            "node": "10. Log Workflow Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "9b. Notify User - Rejected": {
+      "main": [
+        [
+          {
+            "node": "10. Log Workflow Execution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "10. Log Workflow Execution": {
+      "main": [
+        [
+          {
+            "node": "11. Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": {
+      "id": "error-handler-workflow"
+    }
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "id": "crewsnow-moderation",
+      "name": "CrewSnow Moderation"
+    },
+    {
+      "id": "week-5",
+      "name": "Week 5"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-10T00:00:00.000Z",
+  "versionId": "2"
+}

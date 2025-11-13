@@ -3,10 +3,14 @@
 # CREWSNOW SEED WITH RLS HANDLING
 # ============================================================================
 # Description: Load seed data safely even with RLS enabled
-# Usage: ./scripts/seed-with-rls.sh
+# Usage: ./scripts/seed-with-rls.sh [env]
+#   env: dev, prod, or local (default: local)
 # ============================================================================
 
 set -e
+
+# Parse environment argument
+ENVIRONMENT=${1:-local}
 
 # Colors for output
 RED='\033[0;31m'
@@ -16,8 +20,21 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 echo -e "${BLUE}🌱 === CREWSNOW SEED WITH RLS HANDLING ===${NC}"
+echo -e "Environment: ${ENVIRONMENT}"
 echo -e "Timestamp: $(date -u)"
 echo ""
+
+# Validate environment
+case $ENVIRONMENT in
+    local|dev|prod)
+        echo -e "${GREEN}✅ Valid environment: ${ENVIRONMENT}${NC}"
+        ;;
+    *)
+        echo -e "${RED}❌ Invalid environment: ${ENVIRONMENT}${NC}"
+        echo -e "Valid options: local, dev, prod"
+        exit 1
+        ;;
+esac
 
 # Check if supabase CLI is installed
 if ! command -v supabase &> /dev/null; then

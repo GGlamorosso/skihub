@@ -11,8 +11,8 @@ RETURNS TRIGGER AS $$
 DECLARE
     existing_like_id UUID;
     match_exists BOOLEAN;
-    user1_id UUID;
-    user2_id UUID;
+    match_user1_id UUID;
+    match_user2_id UUID;
 BEGIN
     -- Check if the reverse like exists (mutual like)
     SELECT id INTO existing_like_id 
@@ -22,32 +22,32 @@ BEGIN
     IF existing_like_id IS NOT NULL THEN
         -- Ensure proper ordering for match table (smaller UUID first)
         IF NEW.liker_id < NEW.liked_id THEN
-            user1_id := NEW.liker_id;
-            user2_id := NEW.liked_id;
+            match_user1_id := NEW.liker_id;
+            match_user2_id := NEW.liked_id;
         ELSE
-            user1_id := NEW.liked_id;
-            user2_id := NEW.liker_id;
+            match_user1_id := NEW.liked_id;
+            match_user2_id := NEW.liker_id;
         END IF;
         
         -- Check if match already exists
         SELECT EXISTS(
             SELECT 1 FROM matches 
-            WHERE user1_id = user1_id AND user2_id = user2_id
+            WHERE matches.user1_id = match_user1_id AND matches.user2_id = match_user2_id
         ) INTO match_exists;
         
         -- Create match if it doesn't exist
         IF NOT match_exists THEN
             INSERT INTO matches (user1_id, user2_id, matched_at_station_id, created_at)
             SELECT 
-                user1_id, 
-                user2_id, 
+                match_user1_id, 
+                match_user2_id, 
                 -- Try to find a common station where both users are/were
                 COALESCE(
                     (SELECT uss1.station_id 
                      FROM user_station_status uss1 
                      JOIN user_station_status uss2 ON uss1.station_id = uss2.station_id
-                     WHERE uss1.user_id = user1_id 
-                       AND uss2.user_id = user2_id
+                     WHERE uss1.user_id = match_user1_id 
+                       AND uss2.user_id = match_user2_id
                        AND uss1.is_active = true 
                        AND uss2.is_active = true
                        AND uss1.date_from <= uss2.date_to 
@@ -481,10 +481,10 @@ CREATE VIEW recent_matches_with_users AS
 SELECT 
     m.id as match_id,
     m.created_at as matched_at,
-    u1.id as user1_id,
+    u1.id as match_user1_id,
     u1.username as user1_username,
     u1.level as user1_level,
-    u2.id as user2_id,
+    u2.id as match_user2_id,
     u2.username as user2_username,
     u2.level as user2_level,
     s.name as matched_at_station,

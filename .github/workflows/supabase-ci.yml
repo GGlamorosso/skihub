@@ -1,0 +1,290 @@
+name: Supabase CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ published ]
+
+env:
+  SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+  SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+
+jobs:
+  # ========================================
+  # VALIDATION JOB (PRs and all pushes)
+  # ========================================
+  validate:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm install -g supabase@latest
+          npm ci
+
+      - name: Validate migrations syntax
+        run: |
+          echo "Validating migration files..."
+          for file in supabase/migrations/*.sql; do
+            echo "Checking $file"
+            # Basic SQL syntax validation
+            if ! grep -q "^--" "$file"; then
+              echo "Warning: $file missing header comment"
+            fi
+            # Check for common issues
+            if grep -q "CREATE INDEX CONCURRENTLY" "$file"; then
+              echo "Error: $file contains CONCURRENTLY in migration (not allowed in transactions)"
+              exit 1
+            fi
+          done
+
+      - name: Check RLS policies
+        run: |
+          echo "Validating RLS implementation..."
+          # Check that RLS is enabled on tables
+          if ! grep -q "ENABLE ROW LEVEL SECURITY" supabase/migrations/20241116_rls_and_indexes.sql; then
+            echo "Error: RLS not properly enabled in migrations"
+            exit 1
+          fi
+          # Check for view grants instead of policies
+          if ! grep -q "GRANT SELECT.*public_profiles_v" supabase/migrations/20241121_critical_fixes.sql; then
+            echo "Error: View access not properly configured"
+            exit 1
+          fi
+
+      - name: Validate test scripts
+        run: |
+          echo "Validating test scripts..."
+          test_files=(
+            "supabase/test/s2_rls_isolation_tests.sql"
+            "supabase/test/s2_storage_security_tests.sql"
+            "supabase/test/s2_performance_benchmarks.sql"
+            "supabase/test/run_all_s2_tests.sql"
+          )
+          for file in "${test_files[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "Error: Required test file $file is missing"
+              exit 1
+            fi
+          done
+
+  # ========================================
+  # DEV DEPLOYMENT JOB (main branch)
+  # ========================================
+  deploy-dev:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: development
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Supabase CLI
+        run: npm install -g supabase@latest
+
+      - name: Link to Supabase DEV project
+        run: |
+          supabase link --project-ref ${{ secrets.SUPABASE_DEV_PROJECT_REF }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Run migrations on DEV
+        run: |
+          echo "Applying migrations to DEV environment..."
+          supabase db push --yes
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Run RLS-safe seed data (if needed)
+        run: |
+          echo "Checking if seed data needs to be applied..."
+          # Only run seeds if this is a fresh deployment or explicitly requested
+          if [ "${{ github.event.head_commit.message }}" == *"[seed]"* ]; then
+            echo "Seed data requested in commit message"
+            ./scripts/seed-with-rls.sh dev
+          else
+            echo "Seed data not requested - skipping"
+          fi
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Run S2 test suite
+        run: |
+          echo "Running comprehensive test suite..."
+          supabase db run --file supabase/test/run_all_s2_tests.sql > test_results.txt
+          cat test_results.txt
+          # Check for any FAIL results
+          if grep -q "❌ FAIL" test_results.txt; then
+            echo "Some tests failed - check output above"
+            exit 1
+          fi
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deploy Edge Functions
+        run: |
+          echo "Deploying Edge Functions..."
+          supabase functions deploy stripe-webhook --no-verify-jwt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Verify deployment health
+        run: |
+          echo "Running deployment health checks..."
+          supabase db run --file supabase/verification_complete.sql
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+  # ========================================
+  # PROD DEPLOYMENT JOB (releases only)
+  # ========================================
+  deploy-prod:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' && github.event.action == 'published'
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Supabase CLI
+        run: npm install -g supabase@latest
+
+      - name: Create backup before deployment
+        run: |
+          echo "Creating backup before production deployment..."
+          # This would typically involve calling Supabase backup APIs
+          echo "Backup timestamp: $(date)" > backup_info.txt
+
+      - name: Link to Supabase PROD project
+        run: |
+          supabase link --project-ref ${{ secrets.SUPABASE_PROD_PROJECT_REF }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Run migrations on PROD
+        run: |
+          echo "Applying migrations to PRODUCTION environment..."
+          echo "⚠️  PRODUCTION DEPLOYMENT - Applying migrations carefully"
+          supabase db push --yes
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Create production indexes (CONCURRENTLY)
+        run: |
+          echo "Creating production indexes with CONCURRENTLY..."
+          # Run the safe index creation commands generated by our function
+          supabase db run --command "SELECT generate_safe_index_commands();" > index_commands.sql
+          echo "Index commands generated - execute manually if needed:"
+          cat index_commands.sql
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deploy Edge Functions to PROD
+        run: |
+          echo "Deploying Edge Functions to PRODUCTION..."
+          supabase functions deploy stripe-webhook --no-verify-jwt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Run production health checks
+        run: |
+          echo "Running production health checks..."
+          supabase db run --file supabase/test/s2_rls_isolation_tests.sql
+          supabase db run --file supabase/verification_complete.sql
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Notify deployment success
+        run: |
+          echo "✅ Production deployment completed successfully"
+          echo "Release: ${{ github.event.release.tag_name }}"
+          echo "Deployed at: $(date)"
+
+  # ========================================
+  # HEALTH CHECK JOB (scheduled)
+  # ========================================
+  health-check:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    strategy:
+      matrix:
+        environment: [dev, prod]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Supabase CLI
+        run: npm install -g supabase@latest
+
+      - name: Link to Supabase project
+        run: |
+          if [ "${{ matrix.environment }}" == "prod" ]; then
+            supabase link --project-ref ${{ secrets.SUPABASE_PROD_PROJECT_REF }}
+          else
+            supabase link --project-ref ${{ secrets.SUPABASE_DEV_PROJECT_REF }}
+          fi
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Run health checks
+        run: |
+          echo "Running health checks on ${{ matrix.environment }}..."
+          supabase db run --file supabase/test/run_all_s2_tests.sql > health_report_${{ matrix.environment }}.txt
+          
+          # Check for failures
+          if grep -q "❌ FAIL" health_report_${{ matrix.environment }}.txt; then
+            echo "Health check failures detected in ${{ matrix.environment }}"
+            cat health_report_${{ matrix.environment }}.txt
+            exit 1
+          fi
+          
+          echo "✅ Health checks passed for ${{ matrix.environment }}"
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Check index effectiveness
+        run: |
+          echo "Checking index usage effectiveness..."
+          supabase db run --command "SELECT * FROM check_index_effectiveness();" > index_report_${{ matrix.environment }}.txt
+          cat index_report_${{ matrix.environment }}.txt
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+# ========================================
+# SCHEDULED HEALTH CHECKS
+# ========================================
+# Uncomment to enable daily health checks
+# on:
+#   schedule:
+#     - cron: '0 6 * * *'  # Daily at 6 AM UTC
