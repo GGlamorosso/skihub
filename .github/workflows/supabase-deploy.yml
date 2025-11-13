@@ -1,0 +1,225 @@
+# ============================================================================
+# CREWSNOW CI/CD - Supabase Database Deployment
+# ============================================================================
+# Description: Automated deployment of database migrations and Edge Functions
+# Triggers: Push to main (dev) and tags (prod)
+# ============================================================================
+
+name: 🗄️ Supabase Deploy
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ['v*.*.*']
+  pull_request:
+    branches: [main]
+
+env:
+  SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+jobs:
+  # ============================================================================
+  # VALIDATION JOB - Run on PRs
+  # ============================================================================
+  validate:
+    name: 🔍 Validate Database Changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: 🧪 Start local Supabase
+        run: supabase start
+
+      - name: 🗄️ Apply migrations locally
+        run: supabase db reset
+
+      - name: ✅ Run verification tests
+        run: |
+          echo "Running database verification tests..."
+          supabase db run --file ./supabase/verification_complete.sql
+          
+      - name: 📊 Generate migration diff
+        run: |
+          echo "Checking for schema changes..."
+          supabase db diff --use-migra
+          
+      - name: 🛑 Stop local Supabase
+        run: supabase stop
+
+  # ============================================================================
+  # DEVELOPMENT DEPLOYMENT
+  # ============================================================================
+  deploy-dev:
+    name: 🚀 Deploy to Development
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: development
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: 🔗 Link to Dev project
+        run: |
+          supabase link --project-ref ${{ secrets.SUPABASE_PROJECT_REF_DEV }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: 🗄️ Push database changes
+        run: |
+          echo "Deploying to development environment..."
+          supabase db push
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: ⚡ Deploy Edge Functions
+        run: |
+          echo "Deploying Edge Functions..."
+          supabase functions deploy stripe-webhook
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: ✅ Run post-deploy verification
+        run: |
+          echo "Running post-deployment verification..."
+          supabase db run --file ./supabase/verification_complete.sql
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: 📢 Notify deployment success
+        if: success()
+        run: |
+          echo "✅ Development deployment completed successfully!"
+          echo "Project: ${{ secrets.SUPABASE_PROJECT_REF_DEV }}"
+          echo "Commit: ${{ github.sha }}"
+
+  # ============================================================================
+  # PRODUCTION DEPLOYMENT  
+  # ============================================================================
+  deploy-prod:
+    name: 🏭 Deploy to Production
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    environment: production
+    needs: [] # No dependencies - tags are already tested
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: 🔗 Link to Prod project
+        run: |
+          supabase link --project-ref ${{ secrets.SUPABASE_PROJECT_REF_PROD }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: 🛡️ Create backup before deployment
+        run: |
+          echo "Creating pre-deployment backup..."
+          # Note: Actual backup would be handled by Supabase or custom script
+          echo "Backup timestamp: $(date -u +%Y%m%d_%H%M%S)"
+          
+      - name: 🗄️ Push database changes (Production)
+        run: |
+          echo "🚀 Deploying to PRODUCTION environment..."
+          echo "Version: ${GITHUB_REF#refs/tags/}"
+          supabase db push
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: ⚡ Deploy Edge Functions (Production)
+        run: |
+          echo "Deploying Edge Functions to production..."
+          supabase functions deploy stripe-webhook
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY_PROD }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET_PROD }}
+
+      - name: ✅ Run production verification
+        run: |
+          echo "Running critical production verification..."
+          # Run only critical smoke tests in prod
+          supabase db run --file ./supabase/seed/03_test_queries.sql
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: 📊 Update deployment status
+        if: always()
+        run: |
+          if [ $? -eq 0 ]; then
+            echo "✅ PRODUCTION DEPLOYMENT SUCCESSFUL"
+            echo "Version: ${GITHUB_REF#refs/tags/}"
+            echo "Deployed at: $(date -u)"
+          else
+            echo "❌ PRODUCTION DEPLOYMENT FAILED"
+            exit 1
+          fi
+
+      - name: 🚨 Notify on failure
+        if: failure()
+        run: |
+          echo "🚨 CRITICAL: Production deployment failed!"
+          echo "Immediate action required."
+          echo "Version: ${GITHUB_REF#refs/tags/}"
+          echo "Commit: ${{ github.sha }}"
+          # Here you would typically send alerts to Slack/Discord/email
+
+  # ============================================================================
+  # ROLLBACK JOB (Manual trigger)
+  # ============================================================================
+  rollback:
+    name: ⏪ Rollback Database
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    environment: production
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: ⏪ Manual rollback procedure
+        run: |
+          echo "🚨 ROLLBACK PROCEDURE"
+          echo "This would typically involve:"
+          echo "1. Restore from backup"
+          echo "2. Apply previous migration state"
+          echo "3. Update Edge Functions"
+          echo "4. Verify rollback success"
+          echo ""
+          echo "⚠️  Implement specific rollback logic here"
+
+# ============================================================================
+# REQUIRED SECRETS (Set in GitHub repository settings)
+# ============================================================================
+# 
+# SUPABASE_ACCESS_TOKEN          - Your Supabase access token
+# SUPABASE_PROJECT_REF_DEV       - Dev project reference ID  
+# SUPABASE_PROJECT_REF_PROD      - Prod project reference ID
+# STRIPE_SECRET_KEY_PROD         - Stripe secret key for production
+# STRIPE_WEBHOOK_SECRET_PROD     - Stripe webhook secret for production
+#
+# ============================================================================

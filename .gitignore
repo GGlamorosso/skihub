@@ -1,6 +1,8 @@
-# global
-.env
-.env.*
+# Environnement variables (sécurité)
+.env*
+!/.env.example
+env/**/backend.env
+env/**/mobile.env
 *.log
 
 # supabase

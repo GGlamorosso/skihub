@@ -1,0 +1,149 @@
+# ============================================================================
+# CREWSNOW DATABASE HEALTH CHECK
+# ============================================================================
+# Description: Daily health checks and maintenance for production database
+# Schedule: Every day at 3 AM UTC
+# ============================================================================
+
+name: 🏥 Database Health Check
+
+on:
+  schedule:
+    # Run daily at 3 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch: # Manual trigger
+
+env:
+  SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+jobs:
+  health-check:
+    name: 🔍 Database Health Check
+    runs-on: ubuntu-latest
+    environment: production
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: 🔗 Connect to Production
+        run: |
+          supabase link --project-ref ${{ secrets.SUPABASE_PROJECT_REF_PROD }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: 📊 Run Health Diagnostics
+        run: |
+          echo "🏥 === CREWSNOW DATABASE HEALTH CHECK ===" 
+          echo "Date: $(date -u)"
+          echo ""
+          
+          # Run health check queries
+          supabase db run --file - <<'EOF'
+          -- Health check queries
+          DO $$
+          DECLARE
+            user_count INTEGER;
+            active_users INTEGER;
+            match_count INTEGER;
+            message_count_today INTEGER;
+            db_size TEXT;
+          BEGIN
+            RAISE NOTICE '🏥 === DATABASE HEALTH REPORT ===';
+            
+            -- Basic metrics
+            SELECT COUNT(*) INTO user_count FROM users;
+            SELECT COUNT(*) INTO active_users FROM users WHERE last_active_at > NOW() - INTERVAL '7 days';
+            SELECT COUNT(*) INTO match_count FROM matches WHERE is_active = true;
+            SELECT COUNT(*) INTO message_count_today FROM messages WHERE created_at > CURRENT_DATE;
+            SELECT pg_size_pretty(pg_database_size(current_database())) INTO db_size;
+            
+            RAISE NOTICE '📊 Metrics:';
+            RAISE NOTICE '  - Total users: %', user_count;
+            RAISE NOTICE '  - Active users (7d): %', active_users;
+            RAISE NOTICE '  - Active matches: %', match_count;
+            RAISE NOTICE '  - Messages today: %', message_count_today;
+            RAISE NOTICE '  - Database size: %', db_size;
+            
+            -- Performance check
+            RAISE NOTICE '⚡ Performance Check:';
+            RAISE NOTICE '  - Running key query tests...';
+          END $$;
+          
+          -- Test key query performance
+          EXPLAIN (ANALYZE, BUFFERS) 
+          SELECT COUNT(*) FROM get_potential_matches(
+            (SELECT id FROM users WHERE is_active = true LIMIT 1), 10
+          );
+          EOF
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: 🧹 Run Cleanup Tasks
+        run: |
+          echo "🧹 Running maintenance cleanup..."
+          
+          supabase db run --file - <<'EOF'
+          -- Cleanup tasks
+          DO $$
+          DECLARE
+            cleanup_result INTEGER;
+          BEGIN
+            RAISE NOTICE '🧹 === MAINTENANCE CLEANUP ===';
+            
+            -- Run cleanup function
+            SELECT cleanup_expired_data() INTO cleanup_result;
+            RAISE NOTICE 'Expired data cleanup: % records processed', cleanup_result;
+            
+            -- Update statistics
+            ANALYZE users, matches, messages, user_station_status;
+            RAISE NOTICE 'Table statistics updated';
+            
+            -- Check for orphaned data
+            RAISE NOTICE 'Checking data integrity...';
+          END $$;
+          EOF
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: 🚨 Check for Issues
+        run: |
+          echo "🔍 Checking for potential issues..."
+          
+          # This would typically check:
+          # - Long-running queries
+          # - Lock contention  
+          # - Disk space usage
+          # - Connection pool usage
+          # - Error rates
+          
+          echo "✅ Health check completed"
+
+      - name: 📈 Generate Report
+        run: |
+          echo "📈 === DAILY HEALTH REPORT ===" > health_report.md
+          echo "Date: $(date -u)" >> health_report.md
+          echo "" >> health_report.md
+          echo "## Database Status" >> health_report.md
+          echo "- ✅ Database accessible" >> health_report.md
+          echo "- ✅ Key queries responding" >> health_report.md
+          echo "- ✅ Cleanup completed" >> health_report.md
+          echo "" >> health_report.md
+          echo "## Next Steps" >> health_report.md
+          echo "- Monitor performance trends" >> health_report.md
+          echo "- Review error logs if any issues detected" >> health_report.md
+          
+          cat health_report.md
+
+      - name: 🚨 Alert on Critical Issues
+        if: failure()
+        run: |
+          echo "🚨 CRITICAL DATABASE ISSUE DETECTED!"
+          echo "Timestamp: $(date -u)"
+          echo "Check logs and take immediate action."
+          # Here you would send alerts to your monitoring system

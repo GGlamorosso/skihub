@@ -1,0 +1,590 @@
+// ============================================================================
+// CREWSNOW DATABASE SCHEMA - DBML
+// ============================================================================
+// Description: Entity Relationship Diagram for CrewSnow ski/snowboard app
+// Generated: 2024-11-13
+// Version: v0.1.0-db
+// Tools: Use https://dbdiagram.io/ to visualize this schema
+// ============================================================================
+
+Project CrewSnow {
+  database_type: 'PostgreSQL'
+  Note: '''
+    # CrewSnow Database Schema
+    
+    A comprehensive database schema for a ski/snowboard dating and social app.
+    
+    ## Key Features:
+    - User profiles with ski preferences
+    - Geospatial matching using PostGIS
+    - Swipe/match system with automatic detection
+    - Real-time messaging
+    - Activity tracking and gamification
+    - Premium subscriptions and monetization
+    - Group/crew functionality
+    
+    ## Performance Optimizations:
+    - PostGIS GIST indexes for geospatial queries
+    - GIN indexes for array searches (languages, ride_styles)
+    - Composite indexes for pagination
+    - Unique constraints for data integrity
+  '''
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+Enum user_level {
+  beginner
+  intermediate
+  advanced
+  expert
+}
+
+Enum moderation_status {
+  pending
+  approved
+  rejected
+}
+
+Enum verified_video_status {
+  not_submitted
+  pending
+  approved
+  rejected
+}
+
+Enum subscription_status {
+  active
+  canceled
+  incomplete
+  incomplete_expired
+  past_due
+  trialing
+  unpaid
+}
+
+Enum ride_style {
+  alpine
+  freestyle
+  freeride
+  touring
+  racing
+  moguls
+  powder
+  park
+}
+
+Enum language_code {
+  en
+  fr
+  de
+  it
+  es
+  pt
+  nl
+  sv
+  no
+  da
+  ru
+  ja
+  ko
+  zh
+}
+
+// ============================================================================
+// CORE TABLES
+// ============================================================================
+
+Table users {
+  id UUID [pk, default: `gen_random_uuid()`]
+  username VARCHAR(30) [unique, not null]
+  email VARCHAR(255) [unique, not null]
+  bio TEXT
+  birth_date DATE
+  
+  // Ski/snowboard preferences
+  level user_level [not null, default: 'beginner']
+  ride_styles ride_style[] [default: '{}']
+  languages language_code[] [default: '{}']
+  
+  // Premium features
+  is_premium BOOLEAN [not null, default: false]
+  premium_expires_at TIMESTAMPTZ
+  
+  // Video verification
+  verified_video_status verified_video_status [not null, default: 'not_submitted']
+  verified_video_url TEXT
+  verified_at TIMESTAMPTZ
+  
+  // Stripe integration
+  stripe_customer_id VARCHAR(255)
+  
+  // Profile visibility
+  is_active BOOLEAN [not null, default: true]
+  is_banned BOOLEAN [not null, default: false]
+  banned_reason TEXT
+  banned_until TIMESTAMPTZ
+  
+  // Timestamps
+  created_at TIMESTAMPTZ [not null, default: `NOW()`]
+  updated_at TIMESTAMPTZ [not null, default: `NOW()`]
+  last_active_at TIMESTAMPTZ [not null, default: `NOW()`]
+  
+  Note: '''
+    Central user profiles with ski preferences and premium status.
+    
+    Key Features:
+    - Array fields for languages and ride_styles (GIN indexed)
+    - Premium status with expiration tracking
+    - Video verification for authenticity
+    - Stripe customer integration
+    - Soft delete with is_active flag
+  '''
+}
+
+Table stations {
+  id UUID [pk, default: `gen_random_uuid()`]
+  name VARCHAR(255) [not null]
+  country_code CHAR(2) [not null]
+  region VARCHAR(255)
+  
+  // Geographic data (PostGIS)
+  latitude DECIMAL(10,8) [not null]
+  longitude DECIMAL(11,8) [not null]
+  elevation_m INTEGER
+  geom GEOMETRY [note: 'PostGIS Point(4326) - auto-generated from lat/lng']
+  
+  // Station info
+  official_website TEXT
+  season_start_month INTEGER
+  season_end_month INTEGER
+  
+  // Metadata
+  is_active BOOLEAN [not null, default: true]
+  created_at TIMESTAMPTZ [not null, default: `NOW()`]
+  updated_at TIMESTAMPTZ [not null, default: `NOW()`]
+  
+  Note: '''
+    Reference data for ski stations with PostGIS geospatial support.
+    
+    Key Features:
+    - PostGIS geometry for efficient spatial queries
+    - GIST index on geom for radius searches
+    - Season information for operational periods
+    - 60+ European stations pre-loaded
+  '''
+}
+
+Table profile_photos {
+  id UUID [pk, default: `gen_random_uuid()`]
+  user_id UUID [ref: > users.id, not null]
+  
+  // Storage info
+  storage_path TEXT [not null]
+  file_size_bytes INTEGER [not null]
+  mime_type VARCHAR(50) [not null]
+  
+  // Photo status
+  is_main BOOLEAN [not null, default: false]
+  display_order INTEGER [not null, default: 0]
+  
+  // Moderation
+  moderation_status moderation_status [not null, default: 'pending']
+  moderation_reason TEXT
+  moderated_at TIMESTAMPTZ
+  moderated_by UUID [ref: > users.id]
+  
+  // Timestamps
+  created_at TIMESTAMPTZ [not null, default: `NOW()`]
+  updated_at TIMESTAMPTZ [not null, default: `NOW()`]
+  
+  Note: '''
+    User photos with moderation workflow.
+    
+    Security Features:
+    - All photos require moderation before display
+    - Private storage with signed URLs
+    - Automatic cleanup of rejected photos
+  '''
+}
+
+// ============================================================================
+// USER LOCATION AND PRESENCE
+// ============================================================================
+
+Table user_station_status {
+  id UUID [pk, default: `gen_random_uuid()`]
+  user_id UUID [ref: > users.id, not null]
+  station_id UUID [ref: > stations.id, not null]
+  
+  // Date range
+  date_from DATE [not null]
+  date_to DATE [not null]
+  
+  // Proximity settings
+  radius_km INTEGER [not null, default: 25]
+  
+  // Status
+  is_active BOOLEAN [not null, default: true]
+  
+  // Timestamps
+  created_at TIMESTAMPTZ [not null, default: `NOW()`]
+  updated_at TIMESTAMPTZ [not null, default: `NOW()`]
+  
+  Note: '''
+    Tracks user presence at stations for geo-temporal matching.
+    
+    Matching Logic:
+    - Users match when at same/nearby stations
+    - Date ranges must overlap
+    - Configurable radius per user
+  '''
+}
+
+// ============================================================================
+// MATCHING SYSTEM
+// ============================================================================
+
+Table likes {
+  id UUID [pk, default: `gen_random_uuid()`]
+  liker_id UUID [ref: > users.id, not null]
+  liked_id UUID [ref: > users.id, not null]
+  
+  // Timestamp
+  created_at TIMESTAMPTZ [not null, default: `NOW()`]
+  
+  Note: '''
+    Swipe actions log - foundation of the matching system.
+    
+    Features:
+    - UNIQUE constraint prevents duplicate likes
+    - Self-like prevention via CHECK constraint
+    - Automatic match creation via trigger on mutual likes
+  '''
+}
+
+Table matches {
+  id UUID [pk, default: `gen_random_uuid()`]
+  user1_id UUID [ref: > users.id, not null]
+  user2_id UUID [ref: > users.id, not null]
+  
+  // Match metadata
+  matched_at_station_id UUID [ref: > stations.id]
+  is_active BOOLEAN [not null, default: true]
+  
+  // Timestamps
+  created_at TIMESTAMPTZ [not null, default: `NOW()`]
+  
+  Note: '''
+    Mutual likes create matches - gateway to messaging.
+    
+    Key Design:
+    - user1_id < user2_id (canonical ordering)
+    - UNIQUE constraint prevents duplicates
+    - Records station where match occurred
+    - Automatic creation via like trigger
+  '''
+}
+
+// ============================================================================
+// MESSAGING SYSTEM
+// ============================================================================
+
+Table messages {
+  id UUID [pk, default: `gen_random_uuid()`]
+  match_id UUID [ref: > matches.id, not null]
+  sender_id UUID [ref: > users.id, not null]
+  
+  // Message content
+  content TEXT [not null]
+  message_type VARCHAR(20) [not null, default: 'text']
+  
+  // Status
+  is_read BOOLEAN [not null, default: false]
+  read_at TIMESTAMPTZ
+  
+  // Timestamps
+  created_at TIMESTAMPTZ [not null, default: `NOW()`]
+  
+  Note: '''
+    Real-time messaging between matched users.
+    
+    Performance:
+    - Composite index (match_id, created_at DESC) for pagination
+    - Real-time subscriptions via Supabase
+    - Message length constraints (2000 chars max)
+  '''
+}
+
+// ============================================================================
+// SOCIAL FEATURES
+// ============================================================================
+
+Table groups {
+  id UUID [pk, default: `gen_random_uuid()`]
+  name VARCHAR(100) [not null]
+  description TEXT
+  
+  // Group settings
+  max_members INTEGER [not null, default: 4]
+  is_private BOOLEAN [not null, default: false]
+  invite_code VARCHAR(20) [unique]
+  
+  // Creator
+  created_by UUID [ref: > users.id, not null]
+  
+  // Status
+  is_active BOOLEAN [not null, default: true]
+  
+  // Timestamps
+  created_at TIMESTAMPTZ [not null, default: `NOW()`]
+  updated_at TIMESTAMPTZ [not null, default: `NOW()`]
+  
+  Note: '''
+    Group/crew functionality for collective activities.
+    
+    Features:
+    - 2-8 member groups
+    - Private groups with invite codes
+    - Group-based matching possible
+  '''
+}
+
+Table group_members {
+  id UUID [pk, default: `gen_random_uuid()`]
+  group_id UUID [ref: > groups.id, not null]
+  user_id UUID [ref: > users.id, not null]
+  
+  // Role
+  role VARCHAR(20) [not null, default: 'member']
+  
+  // Status
+  is_active BOOLEAN [not null, default: true]
+  
+  // Timestamps
+  joined_at TIMESTAMPTZ [not null, default: `NOW()`]
+  left_at TIMESTAMPTZ
+  
+  Note: '''
+    Group membership tracking with roles.
+    
+    Roles: owner, admin, member
+    '''
+}
+
+Table friends {
+  id UUID [pk, default: `gen_random_uuid()`]
+  requester_id UUID [ref: > users.id, not null]
+  addressee_id UUID [ref: > users.id, not null]
+  
+  // Friendship status
+  status VARCHAR(20) [not null, default: 'pending']
+  
+  // Timestamps
+  created_at TIMESTAMPTZ [not null, default: `NOW()`]
+  accepted_at TIMESTAMPTZ
+  
+  Note: '''
+    Social graph for non-romantic connections.
+    
+    Status: pending, accepted, blocked
+    Optional for v1 - future social features
+  '''
+}
+
+// ============================================================================
+// TRACKING AND STATS
+// ============================================================================
+
+Table ride_stats_daily {
+  id UUID [pk, default: `gen_random_uuid()`]
+  user_id UUID [ref: > users.id, not null]
+  
+  // Date (one record per user per day)
+  date DATE [not null]
+  station_id UUID [ref: > stations.id]
+  
+  // Stats
+  distance_km DECIMAL(8,2) [not null, default: 0]
+  vmax_kmh DECIMAL(5,2) [not null, default: 0]
+  elevation_gain_m INTEGER [not null, default: 0]
+  moving_time_min INTEGER [not null, default: 0]
+  runs_count INTEGER [not null, default: 0]
+  
+  // Source tracking
+  data_source VARCHAR(50) [not null, default: 'manual']
+  external_activity_id TEXT
+  
+  // Timestamps
+  created_at TIMESTAMPTZ [not null, default: `NOW()`]
+  updated_at TIMESTAMPTZ [not null, default: `NOW()`]
+  
+  Note: '''
+    Daily activity tracking for gamification.
+    
+    Data Sources:
+    - manual, strava, gps_track, apple_health, google_fit
+    
+    Gamification:
+    - Leaderboards, achievements, progress tracking
+    - Premium feature for detailed analytics
+  '''
+}
+
+// ============================================================================
+// MONETIZATION
+// ============================================================================
+
+Table boosts {
+  id UUID [pk, default: `gen_random_uuid()`]
+  user_id UUID [ref: > users.id, not null]
+  station_id UUID [ref: > stations.id, not null]
+  
+  // Boost period
+  starts_at TIMESTAMPTZ [not null]
+  ends_at TIMESTAMPTZ [not null]
+  
+  // Boost settings
+  boost_multiplier DECIMAL(3,1) [not null, default: 2.0]
+  
+  // Payment
+  amount_paid_cents INTEGER [not null]
+  currency CHAR(3) [not null, default: 'EUR']
+  stripe_payment_intent_id VARCHAR(255)
+  
+  // Status
+  is_active BOOLEAN [not null, default: true]
+  
+  // Timestamps
+  created_at TIMESTAMPTZ [not null, default: `NOW()`]
+  
+  Note: '''
+    Profile promotion in specific stations.
+    
+    Business Model:
+    - Users pay to boost visibility at stations
+    - Time-limited (hours to days)
+    - Multiplier affects ranking in discovery
+  '''
+}
+
+Table subscriptions {
+  id UUID [pk, default: `gen_random_uuid()`]
+  user_id UUID [ref: > users.id, not null]
+  
+  // Stripe data
+  stripe_subscription_id VARCHAR(255) [unique, not null]
+  stripe_customer_id VARCHAR(255) [not null]
+  stripe_price_id VARCHAR(255) [not null]
+  
+  // Subscription details
+  status subscription_status [not null]
+  current_period_start TIMESTAMPTZ [not null]
+  current_period_end TIMESTAMPTZ [not null]
+  cancel_at_period_end BOOLEAN [not null, default: false]
+  canceled_at TIMESTAMPTZ
+  
+  // Pricing
+  amount_cents INTEGER [not null]
+  currency CHAR(3) [not null, default: 'EUR']
+  interval VARCHAR(20) [not null]
+  
+  // Timestamps
+  created_at TIMESTAMPTZ [not null, default: `NOW()`]
+  updated_at TIMESTAMPTZ [not null, default: `NOW()`]
+  
+  Note: '''
+    Premium subscriptions managed via Stripe.
+    
+    Premium Features:
+    - Unlimited likes/super likes
+    - Advanced filters
+    - Read receipts
+    - Boost credits included
+    - Detailed ride statistics
+  '''
+}
+
+// ============================================================================
+// UTILITY TABLES
+// ============================================================================
+
+Table processed_events {
+  id UUID [pk, default: `gen_random_uuid()`]
+  event_id VARCHAR(255) [unique, not null]
+  event_type VARCHAR(100) [not null]
+  processed_at TIMESTAMPTZ [not null, default: `NOW()`]
+  
+  Note: '''
+    Stripe webhook idempotency tracking.
+    
+    Prevents duplicate processing of webhook events.
+    '''
+}
+
+// ============================================================================
+// INDEXES (Documented in comments - DBML doesn't support all index types)
+// ============================================================================
+
+/*
+KEY INDEXES FOR PERFORMANCE:
+
+SPATIAL INDEXES (PostGIS):
+- stations.geom (GIST) → ST_DWithin() spatial queries
+
+ARRAY INDEXES (GIN):
+- users.languages (GIN) → language matching
+- users.ride_styles (GIN) → style compatibility
+
+COMPOSITE INDEXES:
+- messages (match_id, created_at DESC) → chat pagination
+- user_station_status (station_id, date_from, date_to) → temporal matching
+- ride_stats_daily (user_id, date DESC) → user history
+
+UNIQUE CONSTRAINTS:
+- likes (liker_id, liked_id) → prevent duplicate likes
+- matches (user1_id, user2_id) → prevent duplicate matches
+- ride_stats_daily (user_id, date) → one entry per user per day
+
+PERFORMANCE TARGETS:
+- get_potential_matches(): < 200ms
+- message pagination: < 100ms
+- geospatial search: < 300ms
+- user statistics: < 150ms
+*/
+
+// ============================================================================
+// RELATIONSHIP SUMMARY
+// ============================================================================
+
+/*
+CORE RELATIONSHIPS:
+
+1. USERS → Everything
+   - users.id referenced by most tables
+
+2. MATCHING FLOW:
+   - users → user_station_status (location)
+   - users → likes (swipe actions)
+   - likes (mutual) → matches (via trigger)
+   - matches → messages (chat)
+
+3. SOCIAL FEATURES:
+   - users → groups (via group_members)
+   - users → friends (social graph)
+
+4. CONTENT:
+   - users → profile_photos → moderation
+   - users → ride_stats_daily → gamification
+
+5. MONETIZATION:
+   - users → subscriptions (premium)
+   - users → boosts (visibility)
+
+6. GEOSPATIAL:
+   - stations.geom (GIST indexed)
+   - user_station_status → stations
+   - ST_DWithin() for radius matching
+*/
