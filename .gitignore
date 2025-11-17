@@ -29,3 +29,8 @@ apps/mobile/*.jks
 # OS
 .DS_Store
 Thumbs.db
+
+# Environment files
+env/**/*.env
+env/**/*.env.*
+!env/**/*.env.example

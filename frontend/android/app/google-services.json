@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "823150531998",
+    "project_id": "crewsnow-33b1f",
+    "storage_bucket": "crewsnow-33b1f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:823150531998:android:4ac3e671cae3244fd6728f",
+        "android_client_info": {
+          "package_name": "com.crewsnow.app.dev"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAIX3lHtf_bQUJnmEGqqF5Sc2MAIc3CcoY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
