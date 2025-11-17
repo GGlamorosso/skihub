@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="NONE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="9f87cad6-dcfc-435c-8bee-a2c5f1daa318" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/supabase/migrations/20241116_rls_and_indexes.sql" beforeDir="false" afterPath="$PROJECT_DIR$/supabase/migrations/20241116_rls_and_indexes.sql" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/supabase/migrations/20241117_rls_policies_followup.sql" beforeDir="false" afterPath="$PROJECT_DIR$/supabase/migrations/20241117_rls_policies_followup.sql" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/supabase/migrations/20241118_storage_policies.sql" beforeDir="false" afterPath="$PROJECT_DIR$/supabase/migrations/20241118_storage_policies.sql" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/supabase/migrations/20241119_rls_finitions.sql" beforeDir="false" afterPath="$PROJECT_DIR$/supabase/migrations/20241119_rls_finitions.sql" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/supabase/migrations/20241120_indexes_optimization.sql" beforeDir="false" afterPath="$PROJECT_DIR$/supabase/migrations/20241120_indexes_optimization.sql" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/supabase/migrations/20241123_enhanced_rls_policies.sql" beforeDir="false" afterPath="$PROJECT_DIR$/supabase/migrations/20241123_enhanced_rls_policies.sql" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/supabase/migrations/20250110_analytics_event_triggers.sql" beforeDir="false" afterPath="$PROJECT_DIR$/supabase/migrations/20250110_analytics_event_triggers.sql" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/supabase/migrations/20250110_candidate_scoring_views.sql" beforeDir="false" afterPath="$PROJECT_DIR$/supabase/migrations/20250110_candidate_scoring_views.sql" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="ClangdSettings">
+    <option name="formatViaClangd" value="false" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="ProjectColorInfo"><![CDATA[{
+  "associatedIndex": 5
+}]]></component>
+  <component name="ProjectId" id="35Rjjie1IsIWfRPiWUnIArAVrUi" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.cidr.known.project.marker": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.readMode.enableVisualFormatting": "true",
+    "cf.first.check.clang-format": "false",
+    "cidr.known.project.marker": "true",
+    "git-widget-placeholder": "main",
+    "kotlin-language-version-configured": "true",
+    "last_opened_file_path": "/Users/user/Desktop/SKIAPP/crewsnow"
+  }
+}]]></component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="9f87cad6-dcfc-435c-8bee-a2c5f1daa318" name="Changes" comment="" />
+      <created>1763079915653</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1763079915653</updated>
+    </task>
+    <servers />
+  </component>
+</project>

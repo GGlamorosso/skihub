@@ -1,0 +1,115 @@
+name: crewsnow_frontend
+description: "CrewSnow ski dating application - frontend Flutter"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.1.0 <4.0.0'
+  flutter: ">=3.13.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # Supabase & Backend
+  supabase_flutter: ^2.5.0
+  
+  # State Management
+  flutter_riverpod: ^2.4.9
+  riverpod_annotation: ^2.3.3
+  
+  # Navigation
+  go_router: ^13.2.0
+  
+  # UI & Assets
+  google_fonts: ^5.1.0
+  flutter_svg: ^2.0.7
+  cached_network_image: ^3.3.0
+  
+  # Image & Camera
+  image_picker: ^1.0.4
+  
+  # Location & GPS
+  geolocator: ^9.0.2
+  permission_handler: ^10.4.5
+  
+  # Payments
+  flutter_stripe: ^9.3.1
+  in_app_purchase: ^3.1.10
+  url_launcher: ^6.2.4
+  
+  # Notifications
+  flutter_local_notifications: ^15.1.0
+  firebase_messaging: ^14.6.7
+  
+  # Analytics
+  posthog_flutter: ^3.2.0
+  
+  # Crash Reporting  
+  firebase_core: ^2.15.1
+  firebase_crashlytics: ^3.3.5
+  
+  # Utils
+  intl: ^0.20.2
+  logger: ^1.4.0
+  uuid: ^4.2.1
+  flutter_dotenv: ^5.0.2
+  shared_preferences: ^2.2.0
+  
+  # Charts & Animations
+  fl_chart: ^0.68.0
+  shimmer: ^2.0.0
+  lottie: ^2.3.2
+  
+  # Database Local
+  sqflite: ^2.3.0
+  path: ^1.8.3
+  
+  # Development
+  flutter_launcher_icons: ^0.12.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^2.0.3
+  build_runner: ^2.3.3
+  riverpod_generator: ^2.3.2
+  json_annotation: ^4.8.0
+  json_serializable: ^6.6.1
+  freezed_annotation: ^2.4.4
+  freezed: ^2.4.7
+  
+  # Testing
+  mocktail: ^0.3.0
+  integration_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/images/
+    # - assets/icons/
+    # - assets/animations/
+    # - .env
+
+  # fonts:
+  #   - family: Poppins
+  #     fonts:
+  #       - asset: fonts/Poppins-Regular.ttf
+  #       - asset: fonts/Poppins-Medium.ttf
+  #         weight: 500
+  #       - asset: fonts/Poppins-SemiBold.ttf
+  #         weight: 600
+  #       - asset: fonts/Poppins-Bold.ttf
+  #         weight: 700
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/images/app_icon.png"
+  adaptive_icon_background: "#FF4B8A"
+  adaptive_icon_foreground: "assets/images/app_icon_foreground.png"
