@@ -1,4 +1,4 @@
-# 🎿 CrewSnow Backend — branche `feature/db-schema-v1`
+# 🎿 CrewSnow Backend
 
 Application de rencontres pour skieurs & snowboarders bâtie 100 % sur Supabase (PostgreSQL + PostGIS, Edge Functions, RLS).  
 Cette branche livre **toute l’infrastructure backend** finalisée (Semaines 1 → 10) et prête à être branchée sur le frontend.
@@ -210,5 +210,4 @@ supabase db run --file - <<< "
 
 ---
 
-**🎿 Ready to connect ski enthusiasts worldwide! ⛷️**  
-*Branche `feature/db-schema-v1` — prête à être fusionnée après intégration frontend.*
+**🎿 Ready to connect ski enthusiasts worldwide! ⛷️**
