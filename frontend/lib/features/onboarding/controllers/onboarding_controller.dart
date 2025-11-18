@@ -234,11 +234,12 @@ class OnboardingController extends StateNotifier<OnboardingData> {
       // 5. Gérer consents GPS
       if (state.enableTracking) {
         try {
+          // ✅ Corrigé : Utiliser 'gps' au lieu de 'gps_tracking' (format Edge Function)
           await _supabase.callFunction(
             functionName: 'manage-consent',
             body: {
               'action': 'grant',
-              'purpose': 'gps_tracking',
+              'purpose': 'gps', // Edge Function accepte 'gps', pas 'gps_tracking'
               'version': 1,
             },
           );

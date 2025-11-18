@@ -6,7 +6,6 @@ import 'package:image_picker/image_picker.dart';
 import '../../../components/layout.dart';
 import '../../../components/buttons.dart';
 import '../../../components/bottom_navigation.dart';
-import '../../../router/app_router.dart';
 import '../../../theme/app_colors.dart';
 import '../../../theme/app_typography.dart';
 import '../../../models/user_profile.dart';
@@ -448,14 +447,18 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               const Icon(Icons.date_range, color: AppColors.textSecondary, size: 16),
               const SizedBox(width: 8),
               Text(
-                '${stationStatus.dateFrom.day}/${stationStatus.dateFrom.month} - ${stationStatus.dateTo.day}/${stationStatus.dateTo.month}',
+                // ✅ Corrigé : Gérer les nulls
+                stationStatus.dateFrom != null && stationStatus.dateTo != null
+                  ? '${stationStatus.dateFrom!.day}/${stationStatus.dateFrom!.month} - ${stationStatus.dateTo!.day}/${stationStatus.dateTo!.month}'
+                  : 'Dates non définies',
                 style: AppTypography.caption,
               ),
               const Spacer(),
               const Icon(Icons.radar, color: AppColors.textSecondary, size: 16),
               const SizedBox(width: 4),
               Text(
-                '${stationStatus.radiusKm} km',
+                // ✅ Corrigé : Gérer les nulls
+                '${stationStatus.radiusKm ?? 0} km',
                 style: AppTypography.caption,
               ),
             ],
@@ -487,12 +490,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         SecondaryButton(
           text: 'Modifier ma station',
           icon: Icons.edit_location,
-          onPressed: () {
-            // TODO S6: Naviguer vers écran modification station
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Modification station S6')),
-            );
-          },
+          onPressed: () => context.push('/edit-station'),
         ),
         
         const SizedBox(height: 12),

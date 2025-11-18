@@ -843,11 +843,12 @@ class _TrackerScreenState extends ConsumerState<TrackerScreen>
   
   Future<void> _grantGPSConsent() async {
     try {
+      // ✅ Corrigé : Utiliser 'gps' au lieu de 'gps_tracking' (format Edge Function)
       await SupabaseService.instance.callFunction(
         functionName: 'manage-consent',
         body: {
           'action': 'grant',
-          'purpose': 'gps_tracking',
+          'purpose': 'gps', // Edge Function accepte 'gps', pas 'gps_tracking'
           'version': 1,
         },
       );

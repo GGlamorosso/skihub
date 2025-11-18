@@ -57,7 +57,14 @@ class MatchService {
       }
       
       final data = response.data as Map<String, dynamic>;
-      final candidatesJson = data['candidates'] as List;
+      final candidatesJson = data['candidates'] as List? ?? [];
+      
+      debugPrint('📊 Match-candidates returned ${candidatesJson.length} candidates');
+      
+      if (candidatesJson.isEmpty) {
+        debugPrint('⚠️ No candidates returned - check Edge Function logs');
+        debugPrint('   Response data: $data');
+      }
       
       return candidatesJson
           .map((json) => Candidate.fromJson(json as Map<String, dynamic>))

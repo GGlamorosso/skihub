@@ -144,6 +144,7 @@ class UserService {
   }
   
   /// Créer/mettre à jour station status
+  /// ✅ Corrigé : Utilise upsert pour éviter les erreurs de contrainte unique
   Future<bool> updateStationStatus({
     required String userId,
     required String stationId,
@@ -152,20 +153,40 @@ class UserService {
     required int radiusKm,
   }) async {
     try {
-      // Désactiver anciens statuts
+      // 1) Désactiver toutes les anciennes stations actives de l'utilisateur
       await _supabase.from('user_station_status')
           .update({'is_active': false})
           .eq('user_id', userId);
       
-      // Créer nouveau statut
-      await _supabase.from('user_station_status').insert({
-        'user_id': userId,
-        'station_id': stationId,
-        'date_from': dateFrom.toIso8601String(),
-        'date_to': dateTo.toIso8601String(),
-        'radius_km': radiusKm,
-        'is_active': true,
-      });
+      // 2) Vérifier si une entrée existe déjà pour cette combinaison user_id + station_id
+      final existing = await _supabase.from('user_station_status')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('station_id', stationId)
+          .maybeSingle();
+      
+      if (existing != null) {
+        // Mettre à jour l'entrée existante
+        await _supabase.from('user_station_status')
+            .update({
+              'date_from': dateFrom.toIso8601String(),
+              'date_to': dateTo.toIso8601String(),
+              'radius_km': radiusKm,
+              'is_active': true,
+              'updated_at': DateTime.now().toIso8601String(),
+            })
+            .eq('id', existing['id']);
+      } else {
+        // Créer une nouvelle entrée
+        await _supabase.from('user_station_status').insert({
+          'user_id': userId,
+          'station_id': stationId,
+          'date_from': dateFrom.toIso8601String(),
+          'date_to': dateTo.toIso8601String(),
+          'radius_km': radiusKm,
+          'is_active': true,
+        });
+      }
       
       return true;
     } catch (e) {
@@ -177,21 +198,85 @@ class UserService {
   /// Récupérer stations disponibles
   Future<List<Station>> getStations({String? searchTerm}) async {
     try {
+      debugPrint('🔍 Fetching stations, searchTerm: $searchTerm');
+      
       var query = _supabase.from('stations')
           .select()
           .eq('is_active', true)
           .order('name');
       
-      // TODO: Implémenter recherche case-insensitive (ilike non disponible dans cette version de Supabase)
-      // if (searchTerm != null && searchTerm.isNotEmpty) {
-      //   query = query.ilike('name', '%$searchTerm%');
-      // }
+      // ✅ Corrigé : Recherche (filtrage côté client car ilike peut ne pas être disponible)
+      final response = await query.limit(200); // Augmenter la limite
       
-      final response = await query.limit(50);
+      debugPrint('📊 Stations response: ${response.length} stations found');
       
-      return (response as List)
-          .map((json) => Station.fromJson(json))
-          .toList();
+      if (response.isEmpty) {
+        debugPrint('⚠️ No stations found in database');
+        return [];
+      }
+      
+      // ✅ Corrigé : Convertir snake_case vers camelCase et filtrer si searchTerm fourni
+      final List<Station> stations = [];
+      final searchLower = searchTerm?.toLowerCase() ?? '';
+      
+      for (final item in response) {
+        // Filtrer côté client si searchTerm fourni
+        if (searchLower.isNotEmpty) {
+          final name = (item['name'] as String? ?? '').toLowerCase();
+          final region = (item['region'] as String? ?? '').toLowerCase();
+          final countryCode = (item['country_code'] as String? ?? '').toLowerCase();
+          
+          if (!name.contains(searchLower) && 
+              !region.contains(searchLower) && 
+              !countryCode.contains(searchLower)) {
+            continue; // Skip cette station
+          }
+        }
+        try {
+          final cleanedItem = Map<String, dynamic>.from(item);
+          
+          // ✅ Vérifier que les champs requis existent
+          if (cleanedItem['id'] == null || cleanedItem['name'] == null) {
+            debugPrint('⚠️ Station missing required fields: $item');
+            continue;
+          }
+          
+          // Convertir snake_case vers camelCase (avec gestion des nulls)
+          cleanedItem['countryCode'] = cleanedItem['country_code'] ?? '';
+          cleanedItem['region'] = cleanedItem['region'] ?? '';
+          cleanedItem['elevationM'] = cleanedItem['elevation_m'] ?? 0;
+          cleanedItem['officialWebsite'] = cleanedItem['official_website'];
+          cleanedItem['seasonStartMonth'] = cleanedItem['season_start_month'] ?? 12;
+          cleanedItem['seasonEndMonth'] = cleanedItem['season_end_month'] ?? 3;
+          cleanedItem['isActive'] = cleanedItem['is_active'] ?? true;
+          cleanedItem['createdAt'] = cleanedItem['created_at'] ?? DateTime.now().toIso8601String();
+          
+          // Vérifier latitude/longitude
+          if (cleanedItem['latitude'] == null || cleanedItem['longitude'] == null) {
+            debugPrint('⚠️ Station missing coordinates: ${cleanedItem['name']}');
+            continue;
+          }
+          
+          // Supprimer les clés snake_case
+          cleanedItem.remove('country_code');
+          cleanedItem.remove('elevation_m');
+          cleanedItem.remove('official_website');
+          cleanedItem.remove('season_start_month');
+          cleanedItem.remove('season_end_month');
+          cleanedItem.remove('is_active');
+          cleanedItem.remove('created_at');
+          
+          stations.add(Station.fromJson(cleanedItem));
+        } catch (e, stackTrace) {
+          debugPrint('❌ Error parsing station: $e');
+          debugPrint('   Data: $item');
+          debugPrint('   Stack: $stackTrace');
+          // Continuer avec les autres stations
+        }
+      }
+      
+      debugPrint('✅ Successfully parsed ${stations.length} stations');
+      return stations;
     } catch (e) {
       debugPrint('Error fetching stations: $e');
       return [];

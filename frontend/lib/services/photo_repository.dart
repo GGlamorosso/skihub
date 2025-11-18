@@ -89,9 +89,10 @@ class PhotoRepository {
         return PhotoUploadResult.error('Erreur de préparation de l\'image');
       }
       
-      // Générer path unique
-      final fileName = '${_uuid.v4()}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final storagePath = 'profile_photos/$userId/$fileName';
+      // ✅ Corrigé : Le chemin doit être userId/filename (sans préfixe profile_photos/)
+      // La RLS vérifie que le premier élément du chemin = auth.uid()
+      final fileName = 'profile_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final storagePath = '$userId/$fileName';
       
       // Upload vers Storage
       await _supabase.storage
@@ -116,9 +117,11 @@ class PhotoRepository {
       }
       
       // Insérer en DB
+      // ✅ Corrigé : Ajouter file_size_bytes pour éviter l'erreur NOT NULL
       final photoData = await _supabase.from('profile_photos').insert({
         'user_id': userId,
         'storage_path': storagePath,
+        'file_size_bytes': preparedBytes.length, // ✅ Taille du fichier en bytes
         'is_main': isMain || existingPhotos.isEmpty,
         'moderation_status': 'pending',
       }).select().single();

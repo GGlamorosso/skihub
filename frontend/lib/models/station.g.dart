@@ -40,10 +40,14 @@ UserStationStatus _$UserStationStatusFromJson(Map<String, dynamic> json) =>
     UserStationStatus(
       id: json['id'] as String,
       userId: json['userId'] as String,
-      stationId: json['stationId'] as String,
-      dateFrom: DateTime.parse(json['dateFrom'] as String),
-      dateTo: DateTime.parse(json['dateTo'] as String),
-      radiusKm: (json['radiusKm'] as num).toInt(),
+      stationId: json['stationId'] as String?,
+      dateFrom: json['dateFrom'] == null
+          ? null
+          : DateTime.parse(json['dateFrom'] as String),
+      dateTo: json['dateTo'] == null
+          ? null
+          : DateTime.parse(json['dateTo'] as String),
+      radiusKm: (json['radiusKm'] as num?)?.toInt(),
       isActive: json['isActive'] as bool? ?? true,
       createdAt: DateTime.parse(json['createdAt'] as String),
       station: json['station'] == null
@@ -51,15 +55,24 @@ UserStationStatus _$UserStationStatusFromJson(Map<String, dynamic> json) =>
           : Station.fromJson(json['station'] as Map<String, dynamic>),
     );
 
-Map<String, dynamic> _$UserStationStatusToJson(UserStationStatus instance) =>
-    <String, dynamic>{
-      'id': instance.id,
-      'userId': instance.userId,
-      'stationId': instance.stationId,
-      'dateFrom': instance.dateFrom.toIso8601String(),
-      'dateTo': instance.dateTo.toIso8601String(),
-      'radiusKm': instance.radiusKm,
-      'isActive': instance.isActive,
-      'createdAt': instance.createdAt.toIso8601String(),
-      'station': instance.station,
-    };
+Map<String, dynamic> _$UserStationStatusToJson(UserStationStatus instance) {
+  final val = <String, dynamic>{
+    'id': instance.id,
+    'userId': instance.userId,
+  };
+
+  void writeNotNull(String key, dynamic value) {
+    if (value != null) {
+      val[key] = value;
+    }
+  }
+
+  writeNotNull('stationId', instance.stationId);
+  writeNotNull('dateFrom', instance.dateFrom?.toIso8601String());
+  writeNotNull('dateTo', instance.dateTo?.toIso8601String());
+  writeNotNull('radiusKm', instance.radiusKm);
+  val['isActive'] = instance.isActive;
+  val['createdAt'] = instance.createdAt.toIso8601String();
+  writeNotNull('station', instance.station?.toJson());
+  return val;
+}

@@ -74,11 +74,12 @@ class TrackingService {
   /// Vérifier consent GPS utilisateur
   Future<bool> checkGPSConsent() async {
     try {
+      // ✅ Corrigé : Utiliser 'gps' au lieu de 'gps_tracking' (format Edge Function)
       final response = await _supabase.callFunction(
         functionName: 'manage-consent',
         body: {
           'action': 'check',
-          'purpose': 'gps_tracking',
+          'purpose': 'gps', // Edge Function accepte 'gps', pas 'gps_tracking'
         },
       );
       

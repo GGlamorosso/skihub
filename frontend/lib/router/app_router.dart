@@ -22,6 +22,7 @@ import '../features/feed/presentation/swipe_screen.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../features/profile/presentation/edit_profile_screen.dart';
 import '../features/profile/presentation/photo_gallery_screen.dart';
+import '../features/profile/presentation/edit_station_screen.dart';
 import '../features/profile/presentation/moderation_history_screen.dart';
 import '../features/chat/presentation/matches_screen.dart';
 import '../features/chat/presentation/chat_screen.dart';
@@ -55,6 +56,7 @@ class AppRoutes {
   static const String profile = '/profile';
   static const String editProfile = '/edit-profile';
   static const String photoGallery = '/photo-gallery';
+  static const String editStation = '/edit-station';
   static const String moderationHistory = '/moderation-history';
   static const String tracker = '/tracker';
   static const String stats = '/stats';
@@ -277,6 +279,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.photoGallery,
         name: 'photo-gallery',
         builder: (context, state) => const PhotoGalleryScreen(),
+      ),
+      
+      GoRoute(
+        path: AppRoutes.editStation,
+        name: 'edit-station',
+        builder: (context, state) => const EditStationScreen(),
       ),
       
       GoRoute(

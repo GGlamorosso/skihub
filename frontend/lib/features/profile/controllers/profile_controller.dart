@@ -81,6 +81,8 @@ class ProfileController extends StateNotifier<ProfileState> {
       // Charger station actuelle
       UserStationStatus? currentStation;
       try {
+        // ✅ Corrigé : Utiliser limit(1) pour éviter l'erreur "multiple rows"
+        // Si plusieurs stations actives, prendre la plus récente
         final stationResponse = await _supabase.from('user_station_status')
             .select('''
               *,
@@ -88,9 +90,54 @@ class ProfileController extends StateNotifier<ProfileState> {
             ''')
             .eq('user_id', userId)
             .eq('is_active', true)
-            .single();
+            .order('created_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
         
-        currentStation = UserStationStatus.fromJson(stationResponse);
+        if (stationResponse != null) {
+          // ✅ Corrigé : Convertir snake_case vers camelCase pour le modèle
+          final cleanedResponse = Map<String, dynamic>.from(stationResponse);
+          
+          // Convertir les clés snake_case vers camelCase
+          cleanedResponse['stationId'] = cleanedResponse['station_id'];
+          cleanedResponse['userId'] = cleanedResponse['user_id'];
+          cleanedResponse['dateFrom'] = cleanedResponse['date_from'];
+          cleanedResponse['dateTo'] = cleanedResponse['date_to'];
+          cleanedResponse['radiusKm'] = cleanedResponse['radius_km'];
+          cleanedResponse['isActive'] = cleanedResponse['is_active'];
+          cleanedResponse['createdAt'] = cleanedResponse['created_at'];
+          
+          // Convertir stations(*) si présent
+          if (cleanedResponse['stations'] != null) {
+            final stationData = cleanedResponse['stations'] as Map<String, dynamic>;
+            cleanedResponse['station'] = {
+              'id': stationData['id'],
+              'name': stationData['name'],
+              'countryCode': stationData['country_code'],
+              'region': stationData['region'],
+              'latitude': stationData['latitude'],
+              'longitude': stationData['longitude'],
+              'elevationM': stationData['elevation_m'],
+              'officialWebsite': stationData['official_website'],
+              'seasonStartMonth': stationData['season_start_month'],
+              'seasonEndMonth': stationData['season_end_month'],
+              'isActive': stationData['is_active'] ?? true,
+              'createdAt': stationData['created_at'],
+            };
+          }
+          
+          // Supprimer les clés snake_case pour éviter confusion
+          cleanedResponse.remove('station_id');
+          cleanedResponse.remove('user_id');
+          cleanedResponse.remove('date_from');
+          cleanedResponse.remove('date_to');
+          cleanedResponse.remove('radius_km');
+          cleanedResponse.remove('is_active');
+          cleanedResponse.remove('created_at');
+          cleanedResponse.remove('stations');
+          
+          currentStation = UserStationStatus.fromJson(cleanedResponse);
+        }
       } catch (e) {
         debugPrint('No active station found: $e');
       }
