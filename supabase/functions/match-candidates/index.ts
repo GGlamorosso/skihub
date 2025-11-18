@@ -125,10 +125,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     let candidates: CandidateResponse[] = []
     let cacheUsed = false
+    let candidatesData: any[] | null = null
 
     try {
       // Use optimized function with cache
-      const { data: candidatesData, error: candidatesError } = await supabaseClient
+      const { data, error: candidatesError } = await supabaseClient
         .rpc('get_optimized_candidates', {
           p_user_id: userId,
           p_limit: limit + 1, // +1 to check has_more
@@ -139,10 +140,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
         throw new Error(`Candidates query failed: ${candidatesError.message}`)
       }
 
-      cacheUsed = candidatesData?.length > 0 && use_cache
+      // ✅ Corrigé : Définir candidatesData explicitement
+      candidatesData = data ?? []
+
+      cacheUsed = candidatesData.length > 0 && use_cache
 
       // Transform data
-      candidates = (candidatesData || []).slice(0, limit).map((candidate: any) => ({
+      candidates = candidatesData.slice(0, limit).map((candidate: any) => ({
         candidate_id: candidate.candidate_id,
         username: candidate.username,
         bio: candidate.bio,
@@ -201,6 +205,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // PAGINATION LOGIC
     // =====================================
 
+    // ✅ Corrigé : Utiliser candidatesData qui est maintenant défini dans le scope
     const hasMore = (candidatesData?.length || 0) > limit
     const nextCursor = hasMore && candidates.length > 0 ? {
       score: candidates[candidates.length - 1].compatibility_score,

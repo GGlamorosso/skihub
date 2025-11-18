@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../../components/layout.dart';
-import '../../../components/buttons.dart';
 import '../../../theme/app_colors.dart';
 import '../../../theme/app_typography.dart';
 import '../controllers/onboarding_controller.dart';

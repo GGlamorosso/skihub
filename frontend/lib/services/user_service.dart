@@ -40,7 +40,31 @@ class UserService {
         return null;
       }
       
-      return UserProfile.fromJson(response);
+      // ✅ Corrigé : Convertir NULL arrays en tableaux vides pour éviter type cast errors
+      // + Convertir snake_case vers camelCase pour le modèle
+      final cleanedResponse = Map<String, dynamic>.from(response);
+      
+      // Convertir snake_case vers camelCase
+      cleanedResponse['rideStyles'] = cleanedResponse['ride_styles'] ?? [];
+      cleanedResponse['languages'] = cleanedResponse['languages'] ?? [];
+      cleanedResponse['objectives'] = cleanedResponse['objectives'] ?? [];
+      cleanedResponse['isPremium'] = cleanedResponse['is_premium'] ?? false;
+      cleanedResponse['premiumExpiresAt'] = cleanedResponse['premium_expires_at'];
+      cleanedResponse['birthDate'] = cleanedResponse['birth_date'];
+      cleanedResponse['lastActiveAt'] = cleanedResponse['last_active_at'];
+      cleanedResponse['createdAt'] = cleanedResponse['created_at'];
+      cleanedResponse['verificationStatus'] = cleanedResponse['verified_video_status'] ?? 'not_submitted';
+      
+      // Supprimer les clés snake_case pour éviter confusion
+      cleanedResponse.remove('ride_styles');
+      cleanedResponse.remove('is_premium');
+      cleanedResponse.remove('premium_expires_at');
+      cleanedResponse.remove('birth_date');
+      cleanedResponse.remove('last_active_at');
+      cleanedResponse.remove('created_at');
+      cleanedResponse.remove('verified_video_status');
+      
+      return UserProfile.fromJson(cleanedResponse);
     } catch (e) {
       debugPrint('Error fetching user profile: $e');
       return null;

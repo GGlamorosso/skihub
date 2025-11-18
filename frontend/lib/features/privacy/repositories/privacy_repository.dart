@@ -5,6 +5,23 @@ import '../../../core/services/supabase_service.dart';
 class PrivacyRepository {
   final SupabaseClient _supabase = SupabaseService.client;
 
+  // ✅ Mapping des purposes Flutter vers Edge Function
+  // L'Edge Function accepte: 'gps', 'ai_moderation', 'marketing', 'analytics', 
+  // 'push_notifications', 'email_marketing', 'data_processing'
+  String _mapPurposeToEdgeFunction(String purpose) {
+    switch (purpose) {
+      case 'gps_tracking':
+      case 'location_sharing':
+        return 'gps';
+      case 'ai_assistance':
+      case 'photo_analysis':
+        return 'ai_moderation';
+      default:
+        // Pour les autres, on retourne tel quel (analytics, marketing, etc.)
+        return purpose;
+    }
+  }
+
   // Get user privacy settings
   Future<PrivacySettings> getUserPrivacySettings(String userId) async {
     try {
@@ -66,12 +83,15 @@ class PrivacyRepository {
     String? userAgent,
   }) async {
     try {
+      // ✅ Corrigé : Mapper le purpose vers le format Edge Function
+      final mappedPurpose = _mapPurposeToEdgeFunction(purpose);
+      
       final response = await _supabase.functions.invoke(
         'manage-consent',
         body: {
           'user_id': userId,
           'action': 'grant',
-          'purpose': purpose,
+          'purpose': mappedPurpose,
           'version': version,
           'ip_address': ipAddress,
           'user_agent': userAgent,
@@ -82,8 +102,9 @@ class PrivacyRepository {
         throw Exception('Failed to grant consent: ${response.error}');
       }
 
-      // Fetch the created consent
-      return await getConsent(userId, purpose);
+      // Fetch the created consent (utiliser le purpose mappé)
+      final mappedPurpose = _mapPurposeToEdgeFunction(purpose);
+      return await getConsent(userId, mappedPurpose);
     } catch (e) {
       throw Exception('Failed to grant consent: $e');
     }
@@ -97,12 +118,15 @@ class PrivacyRepository {
     String? userAgent,
   }) async {
     try {
+      // ✅ Corrigé : Mapper le purpose vers le format Edge Function
+      final mappedPurpose = _mapPurposeToEdgeFunction(purpose);
+      
       final response = await _supabase.functions.invoke(
         'manage-consent',
         body: {
           'user_id': userId,
           'action': 'revoke',
-          'purpose': purpose,
+          'purpose': mappedPurpose,
           'ip_address': ipAddress,
           'user_agent': userAgent,
         },
@@ -119,12 +143,15 @@ class PrivacyRepository {
   // Check specific consent
   Future<bool> checkConsent(String userId, String purpose) async {
     try {
+      // ✅ Corrigé : Mapper le purpose vers le format Edge Function
+      final mappedPurpose = _mapPurposeToEdgeFunction(purpose);
+      
       final response = await _supabase.functions.invoke(
         'manage-consent',
         body: {
           'user_id': userId,
           'action': 'check',
-          'purpose': purpose,
+          'purpose': mappedPurpose,
         },
       );
 
