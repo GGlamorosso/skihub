@@ -64,12 +64,16 @@ class PrimaryButton extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (icon != null) ...[
-                    Icon(icon, color: AppColors.textOnPink, size: 20),
-                    const SizedBox(width: 8),
+                    Icon(icon, color: AppColors.textOnPink, size: 18), // ✅ Réduit de 20 à 18
+                    const SizedBox(width: 6), // ✅ Réduit de 8 à 6
                   ],
-                  Text(
-                    text,
-                    style: AppTypography.buttonPrimary,
+                  Flexible( // ✅ Permet au texte de se réduire si nécessaire
+                    child: Text(
+                      text,
+                      style: AppTypography.buttonPrimary,
+                      overflow: TextOverflow.ellipsis, // ✅ Tronquer si trop long
+                      maxLines: 1,
+                    ),
                   ),
                 ],
               ),
@@ -131,12 +135,16 @@ class SecondaryButton extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (icon != null) ...[
-                  Icon(icon, color: AppColors.primaryPink, size: 20),
-                  const SizedBox(width: 8),
+                  Icon(icon, color: AppColors.primaryPink, size: 18), // ✅ Réduit de 20 à 18
+                  const SizedBox(width: 6), // ✅ Réduit de 8 à 6
                 ],
-                Text(
-                  text,
-                  style: AppTypography.buttonSecondary,
+                Flexible( // ✅ Permet au texte de se réduire si nécessaire
+                  child: Text(
+                    text,
+                    style: AppTypography.buttonSecondary,
+                    overflow: TextOverflow.ellipsis, // ✅ Tronquer si trop long
+                    maxLines: 1,
+                  ),
                 ),
               ],
             ),
