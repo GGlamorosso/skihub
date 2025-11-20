@@ -1,14 +1,23 @@
 -- ============================================================================
--- Correction de l'ambiguïté candidate_id dans get_optimized_candidates
+-- Version FINALE de get_optimized_candidates
+-- ============================================================================
+-- Cette fonction utilise get_candidate_scores (avec fallback progressif)
+-- et enrichit les résultats avec tous les détails nécessaires pour l'app.
+-- ============================================================================
+-- Cette version remplace toutes les versions précédentes :
+-- - 20250110_candidate_scoring_views.sql
+-- - 20250111_get_optimized_candidates_improved.sql
+-- - 20250111_get_optimized_candidates_final.sql
+-- - 20250118_fix_candidate_id_ambiguity.sql
+-- - 20250118_fix_all_critical_errors.sql (partie get_optimized_candidates)
 -- ============================================================================
 
--- Supprimer et recréer la fonction pour corriger l'ambiguïté
 DROP FUNCTION IF EXISTS public.get_optimized_candidates(UUID, INTEGER, BOOLEAN);
 
 CREATE OR REPLACE FUNCTION public.get_optimized_candidates(
     p_user_id UUID,
     p_limit INTEGER DEFAULT 20,
-    use_cache BOOLEAN DEFAULT true
+    use_cache BOOLEAN DEFAULT true -- Conservé pour compatibilité avec l'Edge Function
 ) RETURNS TABLE (
     candidate_id UUID,
     username TEXT,
@@ -50,25 +59,25 @@ BEGIN
         FROM user_station_status uss
         JOIN stations s ON s.id = uss.station_id
         WHERE uss.is_active = true
-            AND uss.user_id IN (SELECT base.candidate_id FROM base)  -- ✅ Qualifier avec base.
+            AND uss.user_id IN (SELECT base.candidate_id FROM base)
         ORDER BY uss.user_id, uss.date_from DESC
     ),
     candidate_details AS (
         SELECT 
-            base.candidate_id,  -- ✅ Qualifier avec base.
+            base.candidate_id,
             u.level,
             u.ride_styles,
             u.languages,
             my.level AS my_level,
             my.ride_styles AS my_ride_styles,
             my.languages AS my_languages,
-            base.distance_km,  -- ✅ Qualifier avec base.
+            base.distance_km,
             CASE 
                 WHEN EXISTS (
                     SELECT 1 FROM user_station_status uss1
                     JOIN user_station_status uss2 ON uss1.station_id = uss2.station_id
                     WHERE uss1.user_id = p_user_id 
-                        AND uss2.user_id = base.candidate_id  -- ✅ Qualifier avec base.
+                        AND uss2.user_id = base.candidate_id
                         AND uss1.is_active = true 
                         AND uss2.is_active = true
                         AND uss1.date_from <= uss2.date_to 
@@ -76,7 +85,7 @@ BEGIN
                 ) THEN 1 ELSE 0
             END AS has_date_overlap
         FROM base
-        JOIN users u ON u.id = base.candidate_id  -- ✅ Qualifier avec base.
+        JOIN users u ON u.id = base.candidate_id
         CROSS JOIN (
             SELECT level, ride_styles, languages 
             FROM users 
@@ -84,12 +93,12 @@ BEGIN
         ) my
     )
     SELECT 
-        base.candidate_id::UUID,  -- ✅ Qualifier explicitement
+        base.candidate_id::UUID,
         u.username::TEXT,
         u.bio,
         u.level,
-        base.compatibility_score::NUMERIC,  -- ✅ Qualifier avec base.
-        base.distance_km::NUMERIC,  -- ✅ Qualifier avec base.
+        base.compatibility_score::NUMERIC,
+        base.distance_km::NUMERIC,
         COALESCE(sf.station_name, 'Non spécifiée')::TEXT AS station_name,
         jsonb_build_object(
             'level_score', CASE 
@@ -127,14 +136,19 @@ BEGIN
             LIMIT 1
         ) AS photo_url
     FROM base
-    JOIN users u ON u.id = base.candidate_id  -- ✅ Qualifier avec base.
-    LEFT JOIN station_for_candidate sf ON sf.candidate_user_id = base.candidate_id  -- ✅ Utiliser candidate_user_id
-    LEFT JOIN candidate_details cd ON cd.candidate_id = base.candidate_id  -- ✅ Qualifier avec base.
-    ORDER BY base.compatibility_score DESC, base.distance_km ASC  -- ✅ Qualifier avec base.
+    JOIN users u ON u.id = base.candidate_id
+    LEFT JOIN station_for_candidate sf ON sf.candidate_user_id = base.candidate_id
+    LEFT JOIN candidate_details cd ON cd.candidate_id = base.candidate_id
+    ORDER BY base.compatibility_score DESC, base.distance_km ASC
     LIMIT p_limit;
 END;
 $$;
 
 COMMENT ON FUNCTION public.get_optimized_candidates(UUID, INTEGER, BOOLEAN) IS 
-'Version corrigée de get_optimized_candidates avec résolution d''ambiguïté candidate_id.';
+'Version FINALE de get_optimized_candidates :
+- Utilise get_candidate_scores (avec fallback progressif) pour obtenir les candidats
+- Enrichit avec tous les détails (username, bio, photo_url, score_breakdown, etc.)
+- Corrige l''ambiguïté candidate_id
+- Utilise unnest + JOIN pour compter les intersections (pas cardinality(&&))
+Cette version remplace toutes les versions précédentes.';
 

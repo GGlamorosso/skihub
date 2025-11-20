@@ -22,6 +22,7 @@ class TrackingService {
   StreamSubscription<Position>? _positionSubscription;
   TrackingSession? _currentSession;
   Timer? _autoSaveTimer;
+  Position? _lastKnownPosition;
   
   // Callbacks pour UI
   Function(TrackingSession)? onSessionUpdate;
@@ -31,6 +32,7 @@ class TrackingService {
   bool get isTracking => _currentSession?.isActive == true;
   bool get isPaused => _currentSession?.canResume == true;
   TrackingSession? get currentSession => _currentSession;
+  Position? get lastKnownPosition => _lastKnownPosition;
   
   /// Vérifier permissions GPS
   Future<bool> checkPermissions() async {
@@ -165,6 +167,9 @@ class TrackingService {
   
   /// Traiter nouvelle position GPS
   void _handleNewPosition(Position position) {
+    // ✅ Mettre à jour la dernière position connue
+    _lastKnownPosition = position;
+    
     if (_currentSession == null || !_currentSession!.isActive) return;
     
     final newPoint = TrackPoint(
@@ -449,10 +454,15 @@ class TrackingService {
         timeLimit: Duration(seconds: 10),
       );
       
-      return await Geolocator.getCurrentPosition(
+      final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: settings.accuracy,
         timeLimit: const Duration(seconds: 10),
       );
+      
+      // ✅ Mettre à jour la dernière position connue
+      _lastKnownPosition = position;
+      
+      return position;
     } catch (e) {
       debugPrint('Error getting current position: $e');
       return null;

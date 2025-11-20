@@ -35,12 +35,13 @@ class MatchService {
       // Ajouter la localisation GPS si disponible
       try {
         final position = await _trackingService.getCurrentPosition();
-        if (position != null) {
-          body['latitude'] = position.latitude;
-          body['longitude'] = position.longitude;
-          debugPrint('📍 GPS position sent: ${position.latitude}, ${position.longitude}');
+        final fallbackPosition = position ?? _trackingService.lastKnownPosition;
+        if (fallbackPosition != null) {
+          body['latitude'] = fallbackPosition.latitude;
+          body['longitude'] = fallbackPosition.longitude;
+          debugPrint('📍 GPS position sent: ${fallbackPosition.latitude}, ${fallbackPosition.longitude}');
         } else {
-          debugPrint('⚠️ GPS position not available');
+          debugPrint('⚠️ GPS position not available (no current or last known position)');
         }
       } catch (e) {
         debugPrint('⚠️ Error getting GPS position: $e');
@@ -66,9 +67,45 @@ class MatchService {
         debugPrint('   Response data: $data');
       }
       
-      return candidatesJson
-          .map((json) => Candidate.fromJson(json as Map<String, dynamic>))
-          .toList();
+      // ✅ Convertir snake_case vers camelCase pour correspondre au modèle Candidate
+      return candidatesJson.map((json) {
+        try {
+          final data = json as Map<String, dynamic>;
+          
+          // Valeurs par défaut pour les dates (maintenant + 7 jours)
+          final defaultFrom = DateTime.now();
+          final defaultTo = defaultFrom.add(const Duration(days: 7));
+          
+          final mapped = <String, dynamic>{
+            // Mapping des clés SQL vers le modèle Candidate
+            'id': data['candidate_id'] ?? data['id'] ?? '',
+            'username': data['username'] ?? 'Utilisateur',
+            'age': 25, // TODO: Calculer depuis birth_date si disponible
+            'level': data['level'] ?? 'beginner',
+            'isPremium': data['is_premium'] ?? false,
+            'score': (data['compatibility_score'] ?? 0.0) as num,
+            'distanceKm': (data['distance_km'] ?? 999.0) as num,
+            'photoUrl': data['photo_url'],
+            'rideStyles': <dynamic>[], // ✅ Liste vide, pas null
+            'languages': <dynamic>[], // ✅ Liste vide, pas null
+            'stationName': data['station_name'] ?? 'Non spécifiée',
+            'availableFrom': defaultFrom.toIso8601String(), // ✅ Convertir DateTime en String
+            'availableTo': defaultTo.toIso8601String(), // ✅ Convertir DateTime en String
+            'boostMultiplier': 1.0,
+            'bio': data['bio'],
+            'maxSpeed': null,
+            'isVerified': false,
+          };
+          
+          return Candidate.fromJson(mapped);
+        } catch (e, stackTrace) {
+          debugPrint('❌ Error mapping candidate: $e');
+          debugPrint('   JSON data: $json');
+          debugPrint('   Stack trace: $stackTrace');
+          // Re-throw pour que l'erreur soit visible
+          rethrow;
+        }
+      }).toList();
     } catch (e) {
       ErrorHandler.logError(
         context: 'MatchService.fetchCandidates',

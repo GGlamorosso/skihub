@@ -206,6 +206,13 @@ AS $$
 DECLARE
     consent_id UUID;
 BEGIN
+    -- ✅ Vérifier que l'utilisateur existe dans public.users
+    IF NOT EXISTS (
+        SELECT 1 FROM public.users WHERE id = p_user_id
+    ) THEN
+        RAISE EXCEPTION 'User % does not exist in public.users. Create profile first.', p_user_id;
+    END IF;
+    
     -- Vérifier que la table consents existe
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.tables 

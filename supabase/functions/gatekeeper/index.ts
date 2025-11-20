@@ -1,3 +1,4 @@
+
 // CrewSnow Gatekeeper Edge Function - Week 7
 // 3.3 Edge Function "Gatekeeper" selon spécifications exactes
 
@@ -90,19 +91,74 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // EXTRACT auth.uid() ET VÉRIFIER PREMIUM SELON SPÉCIFICATIONS
     // =====================================
 
-    const { data: userStatus, error: statusError } = await supabaseClient
+    // ✅ Vérifier que l'utilisateur existe dans public.users
+    let userStatus: { is_premium: boolean; premium_expires_at: string | null } | null = null
+    
+    const { data: userStatusData, error: statusError } = await supabaseClient
       .from('users')
       .select('is_premium, premium_expires_at')
       .eq('id', userId)
-      .single()
+      .maybeSingle()
 
-    if (statusError || !userStatus) {
-      return new Response(
-        JSON.stringify({ error: 'User status check failed' }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      )
+    // Si l'utilisateur n'existe pas, créer un profil minimal
+    if (statusError || !userStatusData) {
+      console.log(`⚠️ User ${userId} not found in public.users, creating minimal profile...`)
+      
+      // Essayer de créer le profil depuis auth.users
+      const { data: authUser } = await supabaseClient.auth.getUser()
+      if (authUser?.user) {
+        try {
+          const { error: upsertError } = await supabaseClient.from('users').upsert({
+            id: userId,
+            email: authUser.user.email || '',
+            username: authUser.user.email?.split('@')[0] || `user_${userId.substring(0, 8)}`,
+            is_active: true,
+            last_active_at: new Date().toISOString(),
+            onboarding_completed: false,
+          }, { onConflict: 'id' })
+          
+          if (upsertError) {
+            console.error('Failed to create user profile:', upsertError)
+            return new Response(
+              JSON.stringify({ error: 'User status check failed: unable to create profile', detail: upsertError.message }),
+              { status: 500, headers: { 'Content-Type': 'application/json' } }
+            )
+          }
+          
+          // Recharger le statut
+          const { data: newStatus } = await supabaseClient
+            .from('users')
+            .select('is_premium, premium_expires_at')
+            .eq('id', userId)
+            .single()
+          
+          if (!newStatus) {
+            return new Response(
+              JSON.stringify({ error: 'User status check failed: unable to read created profile' }),
+              { status: 500, headers: { 'Content-Type': 'application/json' } }
+            )
+          }
+          
+          userStatus = newStatus
+          console.log(`✅ Created minimal profile for user ${userId}`)
+        } catch (createError) {
+          console.error('Failed to create user profile:', createError)
+          return new Response(
+            JSON.stringify({ error: 'User status check failed: unable to create profile', detail: createError.message }),
+            { status: 500, headers: { 'Content-Type': 'application/json' } }
+          )
+        }
+      } else {
+        return new Response(
+          JSON.stringify({ error: 'User status check failed: user not found in auth' }),
+          { status: 500, headers: { 'Content-Type': 'application/json' } }
+        )
+      }
+    } else {
+      userStatus = userStatusData
     }
-
+    
+    // Calculer isPremium
     const isPremium = userStatus.is_premium && 
                      (!userStatus.premium_expires_at || new Date(userStatus.premium_expires_at) > new Date())
 

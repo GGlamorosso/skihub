@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:io';
 
 import '../../../models/user_profile.dart';
@@ -174,50 +175,70 @@ class OnboardingController extends StateNotifier<OnboardingData> {
       // 1. Upload photo
       String? photoPath;
       if (state.photoFile != null) {
-        final fileName = '${userId}_main_${DateTime.now().millisecondsSinceEpoch}.jpg';
-        final path = 'profile_photos/$userId/$fileName';
+        // ✅ Corrigé : Le chemin doit être userId/filename (sans préfixe profile_photos/)
+        // La RLS vérifie que le premier élément du chemin = auth.uid()
+        final fileName = 'profile_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        final storagePath = '$userId/$fileName';
         
         final bytes = await state.photoFile!.readAsBytes();
-        await _supabase.uploadFile(
-          bucket: 'profile_photos',
-          path: path,
-          bytes: bytes,
-          metadata: {
-            'user_id': userId,
-            'is_main': 'true',
-          },
-        );
         
-        photoPath = path;
+        // Upload vers Storage avec le bon format
+        await _supabase.storage
+            .from('profile_photos')
+            .uploadBinary(
+              storagePath,
+              bytes,
+              fileOptions: FileOptions(
+                cacheControl: '3600',
+                upsert: false,
+                metadata: {
+                  'user_id': userId,
+                  'is_main': 'true',
+                },
+              ),
+            );
+        
+        photoPath = storagePath; // ✅ Utiliser storagePath (userId/filename) pas profile_photos/userId/filename
       }
       
-      // 2. Mettre à jour ou créer profil utilisateur
+      // 2. Récupérer l'email de l'utilisateur depuis auth.users
+      final currentUser = _supabase.currentUser;
+      if (currentUser == null || currentUser.email == null) {
+        throw Exception('Utilisateur non authentifié ou email manquant');
+      }
+      
+      // 3. Mettre à jour ou créer profil utilisateur
       // Utiliser upsert pour créer si n'existe pas, ou mettre à jour si existe
       await _supabase.from('users').upsert({
         'id': userId,
+        'email': currentUser.email!, // ✅ REQUIS : email manquant
         'username': _generateUsernameFromName(),
         'bio': _generateBioFromObjectives(),
         'birth_date': state.birthDate?.toIso8601String(),
         'level': state.level!.name,
         'ride_styles': state.rideStyles.map((e) => e.name).toList(),
         'languages': state.languages.toList(),
+        'objectives': state.objectives.toList(), // ✅ Ajouté : objectives collectés mais pas sauvegardés
         'onboarding_completed': true,
         'updated_at': DateTime.now().toIso8601String(),
         'is_active': true,
         'last_active_at': DateTime.now().toIso8601String(),
       }, onConflict: 'id');
       
-      // 3. Insérer photo si uploadée
+      // 4. Insérer photo si uploadée
       if (photoPath != null) {
+        // ✅ Corrigé : Ajouter file_size_bytes qui est requis
+        final photoBytes = await state.photoFile!.readAsBytes();
         await _supabase.from('profile_photos').insert({
           'user_id': userId,
           'storage_path': photoPath,
+          'file_size_bytes': photoBytes.length, // ✅ REQUIS : file_size_bytes manquant
           'is_main': true,
           'moderation_status': 'pending',
         });
       }
       
-      // 4. Insérer station status si définie
+      // 5. Insérer station status si définie
       if (state.station != null && 
           state.dateFrom != null && 
           state.dateTo != null) {
@@ -231,7 +252,7 @@ class OnboardingController extends StateNotifier<OnboardingData> {
         });
       }
       
-      // 5. Gérer consents GPS
+      // 6. Gérer consents GPS
       if (state.enableTracking) {
         try {
           // ✅ Corrigé : Utiliser 'gps' au lieu de 'gps_tracking' (format Edge Function)

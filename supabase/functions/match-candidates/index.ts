@@ -1,5 +1,5 @@
-// CrewSnow Match Candidates Edge Function - Week 6
-// Description: Endpoint for optimized matching with pagination and collaborative filtering
+// CrewSnow Match Candidates Edge Function - Optimized
+// Description: Endpoint for optimized matching with pagination and multi-level fallbacks
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
 
@@ -32,7 +32,7 @@ interface CandidateResponse {
   }
   is_premium: boolean
   last_active_at: string
-  photo_url?: string
+  photo_url?: string | null
 }
 
 interface MatchingResponse {
@@ -45,7 +45,7 @@ interface MatchingResponse {
   processing_time_ms: number
 }
 
-// 🔍 Helper pour filtrer + trier les candidats
+// 🔍 Helper pour filtrer + trier les candidats (ne PAS couper à limit ici)
 function filterAndRankCandidates(
   raw: any[],
   {
@@ -69,7 +69,7 @@ function filterAndRankCandidates(
       // En cas d'égalité : plus proche d'abord
       return (a.distance_km ?? 999999) - (b.distance_km ?? 999999)
     })
-    .slice(0, limit)
+    .slice(0, limit) // ici limit sera déjà "limit + 1" pour détecter has_more
 
   return filtered.map((candidate: any) => ({
     candidate_id: candidate.candidate_id,
@@ -79,17 +79,29 @@ function filterAndRankCandidates(
     compatibility_score: candidate.compatibility_score,
     distance_km: candidate.distance_km,
     station_name: candidate.station_name,
-    score_breakdown: candidate.score_breakdown || {},
+    score_breakdown: candidate.score_breakdown || {
+      level_score: 0,
+      styles_score: 0,
+      languages_score: 0,
+      distance_score: 0,
+      overlap_score: 0,
+    },
     is_premium: candidate.is_premium,
     last_active_at: candidate.last_active_at,
     photo_url: candidate.photo_url,
   }))
 }
 
-// 🔄 Helper pour transformer des users en CandidateResponse (pour fallback SQL)
+// 🔄 Helper pour transformer des users en CandidateResponse (fallback SQL)
 function transformUsersToCandidates(users: any[], defaultScore: number = 1.0): CandidateResponse[] {
   return users.map((item: any) => {
-    const user = item.users || item // Support both formats
+    const user = item.users || item // Support both formats (user_station_status join users ou users direct)
+
+    const mainPhoto =
+      user.profile_photos?.find(
+        (p: any) => p.is_main && p.moderation_status === 'approved'
+      ) || user.profile_photos?.[0]
+
     return {
       candidate_id: user.id || item.user_id,
       username: user.username || 'Utilisateur',
@@ -107,13 +119,13 @@ function transformUsersToCandidates(users: any[], defaultScore: number = 1.0): C
       },
       is_premium: user.is_premium || false,
       last_active_at: user.last_active_at || new Date().toISOString(),
-      photo_url: user.profile_photos
-        ?.filter((p: any) => p.is_main && p.moderation_status === 'approved')?.[0]?.storage_path || null,
+      photo_url: mainPhoto?.storage_path ?? null,
     }
   })
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
+  // CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response(null, {
       status: 200,
@@ -138,13 +150,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // =====================================
     // AUTHENTICATION
     // =====================================
-    
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) {
-      return new Response(
-        JSON.stringify({ error: 'Missing Authorization header' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      )
+      return new Response(JSON.stringify({ error: 'Missing Authorization header' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
 
     const supabaseClient = createClient(
@@ -154,15 +165,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
         global: {
           headers: { Authorization: authHeader },
         },
-      },
+      }
     )
 
     const { data: userData, error: userError } = await supabaseClient.auth.getUser()
     if (userError || !userData.user) {
-      return new Response(
-        JSON.stringify({ error: 'Invalid or expired token' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
-      )
+      return new Response(JSON.stringify({ error: 'Invalid or expired token' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
 
     const userId = userData.user.id
@@ -174,7 +185,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     try {
       requestBody = await req.json()
     } catch {
-      // Use defaults if no body provided
+      // pas grave, on utilise les defaults
     }
 
     const {
@@ -183,52 +194,54 @@ Deno.serve(async (req: Request): Promise<Response> => {
       include_collaborative = false,
       min_score = 3,
       max_distance_km = 100,
-      cursor
+      cursor, // pour plus tard si tu veux filtrer côté client
     } = requestBody
 
-    // =====================================
-    // GET CANDIDATES WITH OPTIMIZED MATCHING
-    // =====================================
     let candidates: CandidateResponse[] = []
     let cacheUsed = false
     let candidatesData: any[] = []
 
+    // =====================================
+    // 1) APPEL FONCTION SQL get_optimized_candidates
+    // =====================================
     try {
-      // Étape 1 : Appel à la fonction SQL optimisée
       console.log(`🔍 Fetching candidates for user ${userId}, limit: ${limit + 1}`)
-      
-      const { data, error: candidatesError } = await supabaseClient
-        .rpc('get_optimized_candidates', {
+
+      const { data, error: candidatesError } = await supabaseClient.rpc(
+        'get_optimized_candidates',
+        {
           p_user_id: userId,
-          p_limit: limit + 1, // +1 pour has_more
-          use_cache: use_cache
-        })
+          p_limit: limit + 1, // +1 pour déterminer has_more
+          p_use_cache: use_cache,
+        }
+      )
 
       if (candidatesError) {
         console.error('❌ get_optimized_candidates failed:', candidatesError.message)
         console.error('   Code:', candidatesError.code)
         console.error('   Details:', candidatesError.details)
-        // Continue avec fallback SQL
+        // on continue avec fallback SQL
+        candidatesData = []
       } else {
         candidatesData = data ?? []
-        console.log(`✅ get_optimized_candidates returned ${candidatesData.length} candidates`)
+        console.log(`✅ get_optimized_candidates returned ${candidatesData.length} rows`)
         cacheUsed = candidatesData.length > 0 && use_cache
       }
 
       // =====================================
-      // 🔁 LOGIQUE DE FALLBACK PROGRESSIVE
+      // 2) LOGIQUE DE FILTER + RELAX SUR LES RÉSULTATS SQL
       // =====================================
 
-      // 1) Strict : paramètres demandés par le front
+      // a) Niveau strict sur les résultats SQL
       if (candidatesData.length > 0) {
         candidates = filterAndRankCandidates(candidatesData, {
           minScore: min_score,
           maxDistanceKm: max_distance_km,
-          limit,
+          limit: limit + 1, // +1 pour has_more
         })
       }
 
-      // 2) Si rien → on relâche un peu les critères (sur les mêmes données)
+      // b) Si rien → on relâche un peu (score - 1, distance x2)
       if (candidates.length === 0 && candidatesData.length > 0) {
         const relaxedScore = Math.max(0, min_score - 1)
         const relaxedDistance = max_distance_km * 2
@@ -236,11 +249,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
         candidates = filterAndRankCandidates(candidatesData, {
           minScore: relaxedScore,
           maxDistanceKm: relaxedDistance,
-          limit,
+          limit: limit + 1,
         })
       }
 
-      // 3) Si toujours rien → on prend les meilleurs possibles, quoi qu'il arrive
+      // c) Si toujours rien → prendre les meilleurs possibles (scorés par SQL)
       if (candidates.length === 0 && candidatesData.length > 0) {
         const fallbackSorted = [...candidatesData]
           .sort((a, b) => {
@@ -248,7 +261,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
             if (scoreDiff !== 0) return scoreDiff
             return (a.distance_km ?? 999999) - (b.distance_km ?? 999999)
           })
-          .slice(0, limit)
+          .slice(0, limit + 1)
 
         candidates = fallbackSorted.map((candidate: any) => ({
           candidate_id: candidate.candidate_id,
@@ -258,44 +271,26 @@ Deno.serve(async (req: Request): Promise<Response> => {
           compatibility_score: candidate.compatibility_score,
           distance_km: candidate.distance_km,
           station_name: candidate.station_name,
-          score_breakdown: candidate.score_breakdown || {},
+          score_breakdown: candidate.score_breakdown || {
+            level_score: 0,
+            styles_score: 0,
+            languages_score: 0,
+            distance_score: 0,
+            overlap_score: 0,
+          },
           is_premium: candidate.is_premium,
           last_active_at: candidate.last_active_at,
-          photo_url: candidate.photo_url
+          photo_url: candidate.photo_url,
         }))
       }
 
-      // 4) Si get_optimized_candidates a retourné 0 résultats → Fallback SQL
+      // =====================================
+      // 3) FALLBACK SQL SI AUCUN RÉSULTAT DE LA FONCTION
+      // =====================================
       if (candidates.length === 0 && candidatesData.length === 0) {
         console.log('⚠️ No results from SQL function, trying SQL fallback...')
-        
-        // Vérifier d'abord si l'utilisateur a une station
-        const { data: userStationCheck } = await supabaseClient
-          .from('user_station_status')
-          .select('station_id, date_from, date_to')
-          .eq('user_id', userId)
-          .eq('is_active', true)
-          .maybeSingle()
-        
-        if (!userStationCheck) {
-          console.error('❌ User has no active station - cannot match')
-          // Retourner liste vide plutôt que de crasher
-          return new Response(JSON.stringify({
-            candidates: [],
-            has_more: false,
-            total_found: 0,
-            cache_used: false,
-            processing_time_ms: Date.now() - startTime,
-            error: 'User has no active station'
-          }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          })
-        }
-        
-        console.log(`📍 User station: ${userStationCheck.station_id}, dates: ${userStationCheck.date_from} to ${userStationCheck.date_to}`)
-        
-        // Récupérer la station active de l'utilisateur
+
+        // 3.a) Fallback "même station" si l'utilisateur a une station active
         const { data: userStation } = await supabaseClient
           .from('user_station_status')
           .select('station_id')
@@ -304,10 +299,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
           .maybeSingle()
 
         if (userStation?.station_id) {
-          // Fallback : Tous les utilisateurs actifs de la même station
           const { data: fallbackUsers, error: fallbackError } = await supabaseClient
             .from('user_station_status')
-            .select(`
+            .select(
+              `
               user_id,
               users!inner(
                 id,
@@ -318,7 +313,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
                 last_active_at,
                 profile_photos(storage_path, is_main, moderation_status)
               )
-            `)
+            `,
+            )
             .eq('station_id', userStation.station_id)
             .eq('is_active', true)
             .neq('user_id', userId)
@@ -326,22 +322,27 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
           if (!fallbackError && fallbackUsers && fallbackUsers.length > 0) {
             candidates = transformUsersToCandidates(fallbackUsers, 1.0)
-            console.log(`✅ SQL fallback returned ${candidates.length} candidates from same station`)
+            console.log(
+              `✅ SQL fallback (same station) returned ${candidates.length} candidates`,
+            )
           } else {
-            console.log(`⚠️ SQL fallback (same station) returned ${fallbackUsers?.length || 0} users`)
+            console.log(
+              `⚠️ SQL fallback (same station) returned ${fallbackUsers?.length || 0} users`,
+            )
             if (fallbackError) {
               console.error('   Error:', fallbackError.message)
             }
           }
         }
 
-        // 5) Dernier recours : Tous les utilisateurs actifs (n'importe quelle station)
+        // 3.b) Ultime fallback : tous les utilisateurs actifs (toutes stations)
         if (candidates.length === 0) {
           console.log('Trying ultimate SQL fallback: all active users...')
-          
+
           const { data: allUsers, error: allUsersError } = await supabaseClient
             .from('users')
-            .select(`
+            .select(
+              `
               id,
               username,
               bio,
@@ -349,7 +350,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
               is_premium,
               last_active_at,
               profile_photos(storage_path, is_main, moderation_status)
-            `)
+            `,
+            )
             .eq('is_active', true)
             .neq('id', userId)
             .limit(limit + 1)
@@ -358,7 +360,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
             candidates = transformUsersToCandidates(allUsers, 0.5)
             console.log(`✅ Ultimate fallback returned ${candidates.length} candidates`)
           } else {
-            console.log(`⚠️ Ultimate fallback returned ${allUsers?.length || 0} users`)
+            console.log(
+              `⚠️ Ultimate fallback returned ${allUsers?.length || 0} users`,
+            )
             if (allUsersError) {
               console.error('   Error:', allUsersError.message)
             }
@@ -366,41 +370,39 @@ Deno.serve(async (req: Request): Promise<Response> => {
         }
       }
 
-      console.log(`✅ Final result: ${candidates.length} candidates (from ${candidatesData.length} raw data)`)
-      
-      if (candidates.length === 0) {
-        console.warn('⚠️ WARNING: Returning 0 candidates - user will see empty feed')
-        console.warn('   Possible reasons:')
-        console.warn('   - No other users at same station')
-        console.warn('   - Date ranges do not overlap')
-        console.warn('   - All users already liked/matched')
-        console.warn('   - Distance too large')
-      }
+      console.log(
+        `✅ Final result before pagination: ${candidates.length} candidates (from ${candidatesData.length} raw SQL rows)`,
+      )
 
+      if (candidates.length === 0) {
+        console.warn('⚠️ Returning 0 candidates - user will see empty feed')
+      }
     } catch (error: any) {
       console.error('Error fetching candidates:', error)
-      
+
       return new Response(
-        JSON.stringify({ 
-          error: 'Failed to fetch candidates', 
-          details: error.message ?? String(error)
+        JSON.stringify({
+          error: 'Failed to fetch candidates',
+          details: error.message ?? String(error),
         }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
+        { status: 500, headers: { 'Content-Type': 'application/json' } },
       )
     }
 
     // =====================================
-    // COLLABORATIVE FILTERING (OPTIONAL)
+    // 4) COLLABORATIVE FILTERING (OPTIONNEL)
     // =====================================
     let collaborativeRecommendations: any[] = []
-    
+
     if (include_collaborative && candidates.length < limit) {
       try {
-        const { data: collabData, error: collabError } = await supabaseClient
-          .rpc('get_collaborative_recommendations', {
+        const { data: collabData, error: collabError } = await supabaseClient.rpc(
+          'get_collaborative_recommendations',
+          {
             target_user_id: userId,
-            limit_results: Math.min(10, limit - candidates.length)
-          })
+            limit_results: Math.min(10, limit - candidates.length),
+          },
+        )
 
         if (!collabError && collabData) {
           collaborativeRecommendations = collabData.map((rec: any) => ({
@@ -409,7 +411,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
             similarity_score: rec.similarity_score,
             common_likes_count: rec.common_likes_count,
             reason: rec.recommendation_reason,
-            type: 'collaborative'
+            type: 'collaborative',
           }))
         }
       } catch (error) {
@@ -418,47 +420,49 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
 
     // =====================================
-    // PAGINATION LOGIC
+    // 5) PAGINATION (has_more + next_cursor)
     // =====================================
     const hasMore = candidates.length > limit
-    const nextCursor = hasMore && candidates.length > 0 ? {
-      score: candidates[candidates.length - 1].compatibility_score,
-      distance: candidates[candidates.length - 1].distance_km
-    } : null
+    const paginatedCandidates = candidates.slice(0, limit)
 
-    // =====================================
-    // RESPONSE
-    // =====================================
+    const last = paginatedCandidates[paginatedCandidates.length - 1]
+    const nextCursor =
+      hasMore && last
+        ? {
+            score: last.compatibility_score,
+            distance: last.distance_km,
+          }
+        : null
+
     const processingTime = Date.now() - startTime
 
     const response: MatchingResponse = {
-      candidates: candidates.slice(0, limit), // S'assurer qu'on ne dépasse pas la limite
+      candidates: paginatedCandidates,
       ...(include_collaborative && { collaborative_recommendations: collaborativeRecommendations }),
       has_more: hasMore,
       ...(nextCursor && { next_cursor: nextCursor }),
       total_found: candidates.length,
       cache_used: cacheUsed,
-      processing_time_ms: processingTime
+      processing_time_ms: processingTime,
     }
 
     return new Response(JSON.stringify(response), {
       status: 200,
-      headers: { 
+      headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*' 
+        'Access-Control-Allow-Origin': '*',
       },
     })
-
   } catch (error: any) {
     console.error('Match candidates error:', error)
-    
+
     return new Response(
       JSON.stringify({
         error: 'Internal server error',
         details: error.message ?? String(error),
-        processing_time_ms: Date.now() - startTime
+        processing_time_ms: Date.now() - startTime,
       }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
+      { status: 500, headers: { 'Content-Type': 'application/json' } },
     )
   }
 })
