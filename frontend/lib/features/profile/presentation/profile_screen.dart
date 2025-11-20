@@ -120,30 +120,25 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
   
   Widget _buildHeader() {
-    return Row(
-      children: [
-        IconButton(
-          onPressed: () => context.pop(),
-          icon: const Icon(Icons.arrow_back_ios, color: AppColors.textPrimary),
-        ),
-        const Spacer(),
-        Text(
-          'Mon Profil',
-          style: AppTypography.h3,
-        ),
-        const Spacer(),
-        IconButton(
-          onPressed: () {
-            setState(() => _isEditing = !_isEditing);
-          },
-          icon: Icon(
-            _isEditing ? Icons.check : Icons.edit,
-            color: AppColors.primaryPink,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            'Mon Profil',
+            style: AppTypography.h1,
           ),
-        ),
-      ],
+          IconButton(
+            icon: const Icon(Icons.settings, color: AppColors.textPrimary),
+            onPressed: () => context.push('/settings'),
+            tooltip: 'Paramètres',
+          ),
+        ],
+      ),
     );
   }
+  
   
   Widget _buildProfileHeader(UserProfile profile, Map<String, String> photoUrls) {
     return AppCard(

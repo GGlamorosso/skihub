@@ -37,12 +37,35 @@ class UserService {
       
       if (response == null) {
         debugPrint('No profile found for user $userId');
+        // ✅ Si le profil n'existe pas dans public.users, essayer de récupérer l'email depuis auth.users
+        try {
+          final authUser = _supabase.currentUser;
+          if (authUser?.email != null) {
+            debugPrint('⚠️ Profile not found in public.users, but user exists in auth.users');
+            // Le profil sera créé lors de l'onboarding ou par gatekeeper
+          }
+        } catch (e) {
+          debugPrint('Error checking auth user: $e');
+        }
         return null;
       }
       
       // ✅ Corrigé : Convertir NULL arrays en tableaux vides pour éviter type cast errors
       // + Convertir snake_case vers camelCase pour le modèle
       final cleanedResponse = Map<String, dynamic>.from(response);
+      
+      // ✅ Si l'email n'est pas dans la réponse, le récupérer depuis auth.users
+      if (cleanedResponse['email'] == null || cleanedResponse['email'] == '') {
+        try {
+          final authUser = _supabase.currentUser;
+          if (authUser?.email != null) {
+            cleanedResponse['email'] = authUser!.email!;
+            debugPrint('✅ Email récupéré depuis auth.users');
+          }
+        } catch (e) {
+          debugPrint('Error getting email from auth: $e');
+        }
+      }
       
       // Convertir snake_case vers camelCase
       cleanedResponse['rideStyles'] = cleanedResponse['ride_styles'] ?? [];

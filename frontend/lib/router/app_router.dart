@@ -19,11 +19,15 @@ import '../features/onboarding/presentation/gps_tracker_screen.dart';
 import '../features/onboarding/presentation/station_dates_screen.dart';
 import '../features/onboarding/presentation/onboarding_complete_screen.dart';
 import '../features/feed/presentation/swipe_screen.dart';
-import '../features/profile/presentation/profile_screen.dart';
-import '../features/profile/presentation/edit_profile_screen.dart';
+import '../features/feed/presentation/candidate_details_screen.dart';
+import '../models/candidate.dart';
+import '../features/profile/presentation/profile_screen_new.dart';
+import '../features/profile/presentation/edit_profile_screen_new.dart';
+import '../features/profile/presentation/profile_settings_screen.dart';
 import '../features/profile/presentation/photo_gallery_screen.dart';
 import '../features/profile/presentation/edit_station_screen.dart';
 import '../features/profile/presentation/moderation_history_screen.dart';
+import '../features/profile/presentation/settings_screen.dart';
 import '../features/chat/presentation/matches_screen.dart';
 import '../features/chat/presentation/chat_screen.dart';
 import '../features/tracking/presentation/tracker_screen.dart';
@@ -238,11 +242,31 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: 'candidate-details',
         builder: (context, state) {
           final candidateId = state.pathParameters['candidateId']!;
-          // TODO S3: Récupérer candidate depuis state ou API
-          // Pour l'instant, placeholder
+          // ✅ Récupérer le candidat depuis extra (passé lors de la navigation)
+          final candidate = state.extra as Candidate?;
+          
+          if (candidate != null) {
+            return CandidateDetailsScreen(candidate: candidate);
+          }
+          
+          // Fallback : si le candidat n'est pas dans extra, essayer de le récupérer depuis le feed state
+          // ou afficher un message d'erreur
           return Scaffold(
+            appBar: AppBar(title: const Text('Détails')),
             body: Center(
-              child: Text('Détails candidat: $candidateId'),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                  const SizedBox(height: 16),
+                  Text('Candidat non trouvé: $candidateId'),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: () => context.pop(),
+                    child: const Text('Retour'),
+                  ),
+                ],
+              ),
             ),
           );
         },
@@ -251,13 +275,19 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.profile,
         name: 'profile',
-        builder: (context, state) => const ProfileScreen(),
+        builder: (context, state) => const ProfileScreenNew(),
       ),
       
       GoRoute(
         path: AppRoutes.editProfile,
         name: 'edit-profile',
-        builder: (context, state) => const EditProfileScreen(),
+        builder: (context, state) => const EditProfileScreenNew(),
+      ),
+      
+      GoRoute(
+        path: '/profile-settings',
+        name: 'profile-settings',
+        builder: (context, state) => const ProfileSettingsScreen(),
       ),
       
       GoRoute(
@@ -303,6 +333,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: AppRoutes.stats,
         name: 'stats',
         builder: (context, state) => const StatsScreen(),
+      ),
+      
+      GoRoute(
+        path: AppRoutes.settings,
+        name: 'settings',
+        builder: (context, state) => const SettingsScreen(),
       ),
     ],
     

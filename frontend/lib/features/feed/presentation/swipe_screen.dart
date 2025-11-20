@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../theme/app_colors.dart';
 import '../../../theme/app_typography.dart';
@@ -540,9 +541,10 @@ class _SwipeScreenState extends ConsumerState<SwipeScreen>
   }
   
   void _showCandidateDetails(Candidate candidate) {
-    // TODO S3: Modal détails profil complet
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Détails ${candidate.username} - S3')),
+    // ✅ Naviguer vers l'écran de détails avec le candidat
+    context.push(
+      '/candidate-details/${candidate.id}',
+      extra: candidate, // Passer le candidat complet via extra
     );
   }
   
